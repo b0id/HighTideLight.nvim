@@ -25,6 +25,15 @@ A Neovim plugin that provides real-time visual feedback for Tidal live coding se
 use 'b0id/HighTideLight.nvim'
 ```
 
+### Using [lazy.nvim](https://github.com/folke/lazy.nvim) (AstroNVIM default)
+
+```lua
+{
+  "b0id/HighTideLight.nvim",
+  event = "VeryLazy",
+}
+```
+
 ### Using [vim-plug](https://github.com/junegunn/vim-plug)
 
 ```vim
@@ -40,6 +49,8 @@ git clone https://github.com/b0id/HighTideLight.nvim.git ~/.local/share/nvim/sit
 ```
 
 ## Setup
+
+### Standard Neovim Configuration
 
 Add the following to your `init.lua`:
 
@@ -65,6 +76,56 @@ require('tidal-highlight').setup({
   },
   debug = false,
 })
+```
+
+### AstroNVIM Configuration
+
+For AstroNVIM users, add the plugin to your `plugins` configuration. Create or modify `~/.config/nvim/lua/plugins/tidal-highlight.lua`:
+
+```lua
+return {
+  "b0id/HighTideLight.nvim",
+  event = "VeryLazy",
+  dependencies = {
+    -- Add your Tidal plugin dependency here, e.g.:
+    -- "tidalcycles/tidal.nvim",
+  },
+  opts = {
+    osc = {
+      ip = "127.0.0.1",
+      port = 6011,
+    },
+    animation = {
+      fps = 30,
+      duration_ms = 200,
+    },
+    highlights = {
+      groups = {
+        { name = "TidalEvent1", fg = "#ff6b6b", bg = nil, blend = 30 },
+        { name = "TidalEvent2", fg = "#4ecdc4", bg = nil, blend = 30 },
+        { name = "TidalEvent3", fg = "#45b7d1", bg = nil, blend = 30 },
+        { name = "TidalEvent4", fg = "#96ceb4", bg = nil, blend = 30 },
+      },
+      outline_style = "underline", -- "underline", "box", or "bold"
+    },
+    debug = false,
+  },
+  config = function(_, opts)
+    require('tidal-highlight').setup(opts)
+  end,
+}
+```
+
+Alternatively, you can add it directly to your `community.lua` or main plugins table:
+
+```lua
+{
+  "b0id/HighTideLight.nvim",
+  event = "VeryLazy",
+  opts = {
+    -- Your configuration options here
+  },
+}
 ```
 
 ## Usage
