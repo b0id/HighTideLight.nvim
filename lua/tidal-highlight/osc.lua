@@ -4,7 +4,69 @@ local bit = require('bit')
 
 local M = {}
 M.server = nil
+M.client = nil
 M.callbacks = {}
+
+-- Helper function to write a 32-bit integer big-endian
+local function write_int32_be(val)
+  return string.char(
+    bit.band(bit.rshift(val, 24), 0xFF),
+    bit.band(bit.rshift(val, 16), 0xFF),
+    bit.band(bit.rshift(val, 8), 0xFF),
+    bit.band(val, 0xFF)
+  )
+end
+
+-- Helper function to pad a string to a 4-byte boundary
+local function pad_string(str)
+  local padded = str .. "\0"
+  while #padded % 4 ~= 0 do
+    padded = padded .. "\0"
+  end
+  return padded
+end
+
+-- Function to build an OSC message
+local function build_osc_message(address, args)
+  local message = pad_string(address)
+  local type_tags = ","
+  local arg_data = ""
+
+  for _, arg in ipairs(args) do
+    if type(arg) == "number" and math.floor(arg) == arg then
+      type_tags = type_tags .. "i"
+      arg_data = arg_data .. write_int32_be(arg)
+    elseif type(arg) == "number" then
+      -- Simplified float to bytes (not fully accurate)
+      type_tags = type_tags .. "f"
+      local f_val = math.floor(arg * 2^20)
+      arg_data = arg_data .. write_int32_be(f_val) -- Placeholder
+    elseif type(arg) == "string" then
+      type_tags = type_tags .. "s"
+      arg_data = arg_data .. pad_string(arg)
+    end
+  end
+
+  message = message .. pad_string(type_tags) .. arg_data
+  return message
+end
+
+-- Send an OSC message
+function M.send(address, args, dest_ip, dest_port)
+  if not M.client then
+    M.client = uv.new_udp()
+  end
+
+  local message = build_osc_message(address, args)
+  
+  M.client:send(message, dest_ip, dest_port, function(err)
+    if err then
+      vim.schedule(function()
+        vim.notify("OSC send error: " .. err, vim.log.levels.ERROR)
+      end)
+    end
+  end)
+end
 
 -- Helper functions for binary data parsing (Lua 5.1 compatible)
 local function read_uint32_be(data, offset)
@@ -37,6 +99,7 @@ end
 
 -- OSC packet parsing
 local function parse_osc_packet(data)
+  vim.notify("[HighTideLight] Parsing OSC packet...", vim.log.levels.INFO)
   local messages = {}
   local offset = 1
   
@@ -59,7 +122,10 @@ local function parse_osc_packet(data)
     -- Single message
     local msg = parse_osc_message(data)
     if msg then
+      vim.notify("[HighTideLight] Parsed message: " .. msg.address, vim.log.levels.INFO)
       table.insert(messages, msg)
+    else
+      vim.notify("[HighTideLight] Failed to parse message.", vim.log.levels.WARN)
     end
   end
   
@@ -143,24 +209,36 @@ function M.start(config)
     M.stop()
   end
   
+  vim.notify("[HighTideLight] Starting OSC server on " .. config.osc.ip .. ":" .. config.osc.port, vim.log.levels.INFO)
   M.server = uv.new_udp()
-  M.server:bind(config.osc.ip, config.osc.port)
+  M.server:bind(config.osc.ip, config.osc.port, function(err)
+      if err then
+          vim.schedule(function()
+              vim.notify("OSC BIND error: " .. err, vim.log.levels.ERROR)
+          end)
+      end
+  end)
   
   M.server:recv_start(function(err, data, addr, flags)
+    vim.schedule(function()
+      vim.notify("[HighTideLight] OSC recv_start callback fired!", vim.log.levels.INFO)
+    end)
     if err then
-      if config.debug then
-        vim.schedule(function()
-          vim.notify("OSC error: " .. err, vim.log.levels.ERROR)
-        end)
-      end
+      vim.schedule(function()
+        vim.notify("OSC RECV error: " .. err, vim.log.levels.ERROR)
+      end)
       return
     end
     
     if data then
+      vim.schedule(function()
+        vim.notify("[HighTideLight] Received OSC data!", vim.log.levels.INFO)
+      end)
       local messages = parse_osc_packet(data)
       
       for _, msg in ipairs(messages) do
         vim.schedule(function()
+          vim.notify("[HighTideLight] Dispatching message: " .. msg.address, vim.log.levels.INFO)
           -- Call registered callbacks
           for pattern, callback in pairs(M.callbacks) do
             if msg.address:match(pattern) then
@@ -183,6 +261,7 @@ function M.stop()
     M.server:recv_stop()
     M.server:close()
     M.server = nil
+    vim.notify("[HighTideLight] OSC server stopped.", vim.log.levels.INFO)
   end
 end
 

@@ -7,6 +7,10 @@ M.defaults = {
     ip = "127.0.0.1",
     port = 6011,  -- Different from SuperDirt's 6010
   },
+  supercollider = {
+    ip = "127.0.0.1",
+    port = 57120,
+  },
   animation = {
     fps = 30,
     duration_ms = 200,
@@ -21,7 +25,7 @@ M.defaults = {
     },
     outline_style = "underline", -- or "box", "bold"
   },
-  debug = false,
+  debug = true,
 }
 
 M.current = vim.deepcopy(M.defaults)

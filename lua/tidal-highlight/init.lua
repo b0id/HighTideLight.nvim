@@ -21,15 +21,10 @@ local function wrap_tidal_send()
     -- Send registration to SuperCollider if we have processed code
     if processed ~= code then
       -- Notify SuperCollider about this pattern
-      local osc_msg = string.format("/tidal/register %d %s d1", event_id, code:gsub('"', '\\"'))
-      -- This would send to SuperCollider, but we need a different approach
-      -- For now, just store the information
-      vim.g.tidal_last_processed = {
-        event_id = event_id,
-        code = code,
-        buffer = buffer,
-        line = line_num
-      }
+      osc.send("/tidal/register", 
+               {event_id, code, "d1"}, 
+               config.current.supercollider.ip, 
+               config.current.supercollider.port)
     end
   end)
   
@@ -48,39 +43,83 @@ local function wrap_tidal_send()
 end
 
 -- Handle incoming OSC highlight events
-local function handle_osc_highlight(args)
-  -- Expected args: [event_id, buffer_id, row, start_col, end_col, duration, cycle, ...]
-  if #args < 5 then return end
+local function handle_osc_highlight(args, address)
+  if config.current.debug then
+    vim.notify(string.format("[HighTideLight] OSC received at %s with %d args: %s", 
+              address, #args, vim.inspect(args)), vim.log.levels.INFO)
+  end
+  
+  -- Expected args: [event_id, sound, duration, cycle]
+  if #args < 3 then 
+    vim.notify("[HighTideLight] Insufficient OSC args: " .. #args, vim.log.levels.WARN)
+    return 
+  end
   
   local event_id = args[1]
-  local buffer_id = args[2]
-  local row = args[3]
-  local start_col = args[4]
-  local end_col = args[5]
+  local sound = args[2]
+  local duration = args[3]
+  
+  if config.current.debug then
+    vim.notify(string.format("[HighTideLight] Processing: eventId=%s sound=%s duration=%s", 
+              tostring(event_id), tostring(sound), tostring(duration)), vim.log.levels.INFO)
+  end
   
   -- Get event info from processor
   local event_info = processor.get_event_info(event_id)
-  if not event_info then
-    -- Fallback to buffer_id if we don't have the event
-    event_info = {
-      buffer = buffer_id,
-      row = row
-    }
+  if not event_info then 
+    -- If no specific event info, create a generic highlight on current line
+    local buffer = vim.api.nvim_get_current_buf()
+    local cursor = vim.api.nvim_win_get_cursor(0)
+    local line_num = cursor[1] - 1
+    
+    -- Choose highlight group based on sound hash
+    local sound_hash = 0
+    for i = 1, #sound do
+      sound_hash = sound_hash + string.byte(sound, i)
+    end
+    local hl_index = (sound_hash % #config.current.highlights.groups) + 1
+    local hl_group = config.current.highlights.groups[hl_index].name
+    
+    -- Queue a generic highlight
+    animation.queue_event({
+      event_id = event_id .. "-generic",
+      buffer = buffer,
+      row = line_num,
+      start_col = 0,
+      end_col = 20, -- Highlight first 20 characters
+      hl_group = hl_group,
+      duration = duration * 1000 -- Convert to milliseconds
+    })
+    
+    vim.notify(string.format("[HighTideLight] Generic highlight for %s", sound), vim.log.levels.INFO)
+    return
   end
   
-  -- Choose highlight group based on cycle or event_id
-  local hl_index = (event_id % #config.current.highlights.groups) + 1
-  local hl_group = config.current.highlights.groups[hl_index].name
+  -- Find the marker for this sound
+  for _, marker in ipairs(event_info.markers) do
+    if marker.word == sound then
+      -- Choose highlight group based on cycle or event_id
+      local hl_index = (event_id % #config.current.highlights.groups) + 1
+      local hl_group = config.current.highlights.groups[hl_index].name
+      
+      -- Queue the highlight
+      animation.queue_event({
+        event_id = event_id .. "-" .. marker.start_col, -- Unique ID for this highlight
+        buffer = event_info.buffer,
+        row = event_info.row,
+        start_col = marker.start_col,
+        end_col = marker.end_col,
+        hl_group = hl_group,
+        duration = duration * 1000 -- Convert to milliseconds
+      })
+      
+      vim.notify(string.format("[HighTideLight] Highlighted %s at %d:%d-%d", 
+                sound, event_info.row, marker.start_col, marker.end_col), vim.log.levels.INFO)
+      return -- Stop after finding the first match
+    end
+  end
   
-  -- Queue the highlight
-  animation.queue_event({
-    event_id = event_id,
-    buffer = event_info.buffer,
-    row = event_info.row,
-    start_col = start_col,
-    end_col = end_col,
-    hl_group = hl_group
-  })
+  vim.notify("[HighTideLight] No marker found for sound: " .. sound, vim.log.levels.WARN)
 end
 
 -- Setup function
@@ -98,7 +137,7 @@ function M.setup(opts)
   osc.start(cfg)
   
   -- Register OSC handler
-  osc.on("/editor/highlights", handle_osc_highlight)
+  osc.on("/editor/highlight", handle_osc_highlight)
   
   -- Start animation loop
   animation.start(cfg)

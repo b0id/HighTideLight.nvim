@@ -119,6 +119,63 @@ function M.test_tidal_integration()
   }
 end
 
+-- Test OSC message sending to SuperCollider
+function M.test_supercollider_connection()
+  local osc = require('tidal-highlight.osc')
+  local config = require('tidal-highlight.config')
+  
+  print("🎛️  Testing SuperCollider Connection:")
+  
+  -- Send test message to SuperCollider
+  local success, err = pcall(function()
+    osc.send("/test/from_neovim", {"hello", "supercollider"}, 
+             config.current.supercollider.ip, config.current.supercollider.port)
+  end)
+  
+  if success then
+    print("  Test message sent to SuperCollider ✅")
+    print("  Target:", config.current.supercollider.ip .. ":" .. config.current.supercollider.port)
+  else
+    print("  Failed to send message ❌")
+    print("  Error:", tostring(err))
+  end
+  
+  return success
+end
+
+-- Test self OSC loop
+function M.test_osc_loop()
+  local osc = require('tidal-highlight.osc')
+  local config = require('tidal-highlight.config')
+  
+  print("🔄 Testing OSC Loop:")
+  
+  -- Start OSC server
+  osc.start(config.current)
+  
+  local test_received = false
+  osc.on("/test/loop", function(args)
+    test_received = true
+    vim.notify("OSC loop test successful! Args: " .. vim.inspect(args), vim.log.levels.INFO)
+  end)
+  
+  -- Send to ourselves
+  vim.defer_fn(function()
+    osc.send("/test/loop", {"test", 123}, config.current.osc.ip, config.current.osc.port)
+  end, 100)
+  
+  -- Check result after delay
+  vim.defer_fn(function()
+    if test_received then
+      print("  OSC loop test: ✅")
+    else
+      print("  OSC loop test: ❌")
+    end
+  end, 500)
+  
+  return true
+end
+
 -- Comprehensive system check
 function M.run_diagnostics()
   print("🔍 HighTideLight.nvim Diagnostics")
@@ -171,6 +228,14 @@ function M.run_diagnostics()
     print("  Integration:", "❌")
     print("  Error:", tidal_result.error)
   end
+  
+  -- SuperCollider connection test
+  print("\n")
+  local sc_success = M.test_supercollider_connection()
+  
+  -- OSC loop test
+  print("\n")
+  M.test_osc_loop()
   
   print("\n" .. string.rep("=", 50))
   
