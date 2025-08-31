@@ -39,11 +39,11 @@ AppClock.sched(2.0, {
         ~dirt.receiveAction = { |msg|
             var latency, event, eventId, sound, delta;
 
-            // DEBUG: Post the full message structure
+            // DEBUG: Post the full message structure (this was working!)
             ("SuperDirt msg structure: " ++ msg).postln;
             ("SuperDirt msg size: " ++ msg.size).postln;
             
-            // Correctly extract event information from the OSC message
+            // Keep the original working extraction
             latency = msg[0];
             event = msg[1];
 
@@ -51,31 +51,22 @@ AppClock.sched(2.0, {
             ("SuperDirt Event: " ++ event).postln;
             ("SuperDirt Event class: " ++ event.class).postln;
 
-            // Handle different event types
-            if(event.notNil and: { event.isKindOf(Dictionary) }) {
-                // Find eventId and sound
-                event.pairsDo { |key, value| 
-                    ("Event key: " ++ key ++ " = " ++ value).postln;
-                    if(key == \deltaContext) {
-                        eventId = value;
-                    };
-                    if(key == \s) {
-                        sound = value;
-                    };
-                    if(key == \delta) {
-                        delta = value;
-                    };
-                };
-
-                // If we have both, send the highlight message
-                if(eventId.notNil and: { sound.notNil }) {
-                    ~highlightOSC.sendHighlight(eventId, sound, delta ? 0.25, 1);
-                    ("Sent highlight for: " ++ sound ++ " with eventId: " ++ eventId).postln;
-                } {
-                    ("Missing data - eventId: " ++ eventId ++ " sound: " ++ sound).postln;
+            // The actual event data seems to be in the message structure itself!
+            // Let's extract from msg directly since we can see the data there
+            if(msg.isKindOf(Dictionary)) {
+                sound = msg[\s];
+                eventId = msg[\_id_] ? msg[\id] ? 1;
+                delta = msg[\delta] ? 0.25;
+                
+                ("Extracted from msg - sound: " ++ sound ++ " eventId: " ++ eventId).postln;
+                
+                // Send highlight if we have sound
+                if(sound.notNil) {
+                    ~highlightOSC.sendHighlight(eventId, sound, delta, 1);
+                    ("Sent highlight for: " ++ sound).postln;
                 };
             } {
-                ("Event is nil or not a Dictionary: " ++ event).postln;
+                ("Message is not a Dictionary: " ++ msg.class).postln;
             };
 
             // Call original function
