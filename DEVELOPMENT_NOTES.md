@@ -39,3 +39,22 @@
 ```bash
 git checkout v0.1.0-rudimentary
 ```
+Stable Version Tagged
+Tag: v0.1.0-rudimentary
+Status: Stable rudimentary version with basic OSC communication and highlighting
+Branch: master (pushed to origin)
+Development Branch Created
+Branch: dev/osc-fixes (active branch, pushed to origin)
+Purpose: Continue OSC compatibility fixes and improvements
+Documentation: Added DEVELOPMENT_NOTES.md with current state
+Quick Commands for Later
+At work, to continue development:
+
+
+git clone https://github.com/b0id/HighTideLight.nvim.gitcd HighTideLight.nvimgit checkout dev/osc-fixes
+
+At work, to continue development:
+
+git clone https://github.com/b0id/HighTideLight.nvim.git
+cd HighTideLight.nvim
+git checkout dev/osc-fixes
