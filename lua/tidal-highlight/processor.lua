@@ -7,7 +7,7 @@ M.next_event_id = 1
 
 -- Patterns to match Tidal constructs
 local QUOTED_PATTERN = [["([^"]*)"]]
-local CONTROL_PATTERN = [[%$%s*(%w+)]]
+local CONTROL_PATTERN = [[#%s*(%w+)]]
 local WORD_PATTERN = [[(%w+)]]
 local EXCLUDE_PATTERNS = { "^%d+$", "^p$" }  -- numerals and 'p' function
 
@@ -42,9 +42,9 @@ function M.process_line(buffer, line_num, text)
   end
   
   -- Find and mark quoted mini-notation strings
-  for quoted_text, start_col in text:gmatch('()' .. QUOTED_PATTERN) do
+  for start_col, quoted_text in text:gmatch('()' .. QUOTED_PATTERN) do
     -- Process words within quotes
-    for word, word_start in quoted_text:gmatch('()(%S+)') do
+    for word_start, word in quoted_text:gmatch('()(%S+)') do
       -- Check if word should be excluded
       local exclude = false
       for _, pattern in ipairs(EXCLUDE_PATTERNS) do
@@ -69,7 +69,7 @@ function M.process_line(buffer, line_num, text)
   end
   
   -- Find control patterns
-  for control, start_col in text:gmatch('()' .. CONTROL_PATTERN) do
+  for start_col, control in text:gmatch('()' .. CONTROL_PATTERN) do
     table.insert(M.event_ids[event_id].markers, {
       word = control,
       start_col = start_col,

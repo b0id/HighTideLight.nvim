@@ -85,6 +85,21 @@ function M.update_frame()
   M.current_frame_events = {}
 end
 
+-- Clear highlights for a specific line
+function M.clear_line(buffer, row)
+  if not vim.api.nvim_buf_is_valid(buffer) then
+    return
+  end
+  
+  -- Clear extmarks for this line
+  vim.api.nvim_buf_clear_namespace(buffer, M.namespace, row, row + 1)
+  
+  -- Clean up our data structures
+  if M.markers[buffer] and M.markers[buffer][row] then
+    M.markers[buffer][row] = nil
+  end
+end
+
 -- Clear all highlights
 function M.clear_all()
   for buffer, _ in pairs(M.markers) do
