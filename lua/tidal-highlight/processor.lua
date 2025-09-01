@@ -156,8 +156,8 @@ function M.process_line(buffer, line_num, text)
       -- Store the column offset for this pattern (relative to quote start)
       col_offset = quote_start
       
-      -- Inject deltaContext with column offset and event ID
-      local injection = string.format('(deltaContext %d %d %s)', col_offset, event_id, quoted_pattern)
+      -- Inject deltaContext as comment (won't break Tidal parsing)
+      local injection = string.format('%s -- deltaContext %d %d', quoted_pattern, col_offset, event_id)
       processed = before .. injection .. after
       
       -- Calculate offset for position mapping

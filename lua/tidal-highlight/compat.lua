@@ -53,61 +53,41 @@ end
 
 -- Hook into grddavies/tidal.nvim evaluation
 function M.hook_grddavies_tidal(processor_callback)
-  local ok, tidal = pcall(require, 'tidal')
+  local ok, message = pcall(require, 'tidal.core.message')
   if not ok then
-    return false, "Could not load tidal module"
+    return false, "Could not load tidal.core.message module"
   end
   
-  -- grddavies/tidal.nvim has functions in tidal.api
-  if not tidal.api then
-    return false, "No tidal.api found"
+  -- Hook the actual send_line function where text is passed
+  local original_send_line = message.tidal.send_line
+  if not original_send_line then
+    return false, "No tidal.send_line found"
   end
   
-  -- Create wrapper for evaluation
-  local function wrap_evaluation(original_func, func_name)
-    return function(...)
-      local args = {...}
+  message.tidal.send_line = function(text)
+    local processed_text = text
+    
+    -- Process the code before sending
+    if processor_callback and text and #text > 0 then
+      local buffer = vim.api.nvim_get_current_buf()
+      local cursor = vim.api.nvim_win_get_cursor(0)
+      local processor = require('tidal-highlight.processor')
+      local processed, event_id = processor.process_line(buffer, cursor[1], text)
       
-      -- Get the code being sent
-      local code = args[1] or ""
-      if type(code) == "table" then
-        code = table.concat(code, "\n")
+      -- Call the callback for tracking
+      processor_callback(buffer, cursor[1], text)
+      
+      -- Use the processed code if it changed
+      if processed ~= text then
+        processed_text = processed
       end
-      
-      -- Process the code before sending
-      if processor_callback then
-        local buffer = vim.api.nvim_get_current_buf()
-        local cursor = vim.api.nvim_win_get_cursor(0)
-        processor_callback(buffer, cursor[1], code)
-      end
-      
-      -- Call original function
-      return original_func(...)
     end
+    
+    -- Call original function with potentially modified text
+    return original_send_line(processed_text)
   end
   
-  -- Hook into the API functions
-  local functions_to_wrap = {
-    'send_line',
-    'send_block', 
-    'send_visual',
-    'send_multiline',
-    'send_node',
-  }
-  
-  local wrapped_count = 0
-  for _, func_name in ipairs(functions_to_wrap) do
-    if tidal.api[func_name] then
-      tidal.api[func_name] = wrap_evaluation(tidal.api[func_name], func_name)
-      wrapped_count = wrapped_count + 1
-    end
-  end
-  
-  if wrapped_count == 0 then
-    return false, "No evaluation functions found to wrap in tidal.api"
-  end
-  
-  return true, string.format("Wrapped %d API functions", wrapped_count)
+  return true, "Hooked into tidal.core.message.tidal.send_line"
 end
 
 -- Hook into tidalcycles/tidal.nvim 
