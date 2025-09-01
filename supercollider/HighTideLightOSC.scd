@@ -1,18 +1,32 @@
+// HighTideLightOSC.scd
+// SuperCollider helper for testing HighTideLight.nvim OSC communication
+
 ( 
 // Configuration
-~highlightOSC = (
-    // Neovim OSC address
-    editor: NetAddr("127.0.0.1", 6011),
+~neovimOSC = NetAddr("127.0.0.1", 6011);  // Send to Neovim plugin
+~testEventId = 1001;
 
-    // Send highlight event to Neovim
-    sendHighlight: { |self, eventId, sound, duration, cycle|
-        self.editor.sendMsg('/editor/highlight',
-            eventId, sound, duration, cycle);
-        if(~highlightDebug == true) {
-            ("Sent highlight: event=" ++ eventId ++ " sound=" ++ sound ++ " duration=" ++ duration).postln;
-        };
-    }
-);
+// Test function: Send highlight event to Neovim
+~sendHighlight = { |eventId, startCol, endCol, duration|
+    eventId = eventId ? ~testEventId;
+    startCol = startCol ? 10;
+    endCol = endCol ? 20;
+    duration = duration ? 200;
+    
+    ~neovimOSC.sendMsg("/editor/highlights", eventId, startCol, endCol, duration);
+    "Sent highlight event: ID=%, cols=%-%, duration=%ms".format(eventId, startCol, endCol, duration).postln;
+};
+
+// Test function: Send sound-based highlight
+~sendSoundHighlight = { |eventId, sound, duration, cycle|
+    eventId = eventId ? ~testEventId;
+    sound = sound ? "bd";
+    duration = duration ? 300;
+    cycle = cycle ? 1;
+    
+    ~neovimOSC.sendMsg("/editor/highlights", eventId, sound, duration, cycle);
+    "Sent sound highlight: ID=%, sound=%, duration=%ms".format(eventId, sound, duration).postln;
+};
 
 // Debug toggle
 OSCdef(\idalHighlightDebug, { |msg, time, addr, recvPort| 
@@ -62,7 +76,7 @@ AppClock.sched(2.0, {
                 
                 // Send highlight if we have sound
                 if(sound.notNil) {
-                    ~highlightOSC.sendHighlight(eventId, sound, delta, 1);
+                    ~neovimOSC.sendMsg("/editor/highlight", eventId, sound, delta, 1);
                     ("Sent highlight for: " ++ sound).postln;
                 };
             } {

@@ -42,84 +42,120 @@ local function wrap_tidal_send()
   return true
 end
 
--- Handle incoming OSC highlight events
+-- Handle incoming OSC highlight events with precise position mapping
 local function handle_osc_highlight(args, address)
   if config.current.debug then
-    vim.notify(string.format("[HighTideLight] OSC received at %s with %d args: %s", 
-              address, #args, vim.inspect(args)), vim.log.levels.INFO)
+    -- Make debug messages transient (disappear after 2 seconds)
+    vim.notify(string.format("[HighTideLight] OSC %s: %s", address, vim.inspect(args)), vim.log.levels.DEBUG, {timeout = 2000})
   end
   
-  -- Expected args: [event_id, sound, duration, cycle]
-  if #args < 3 then 
-    vim.notify("[HighTideLight] Insufficient OSC args: " .. #args, vim.log.levels.WARN)
-    return 
-  end
-  
-  local event_id = args[1]
-  local sound = args[2]
-  local duration = args[3]
-  
-  if config.current.debug then
-    vim.notify(string.format("[HighTideLight] Processing: eventId=%s sound=%s duration=%s", 
-              tostring(event_id), tostring(sound), tostring(duration)), vim.log.levels.INFO)
-  end
-  
-  -- Get event info from processor
-  local event_info = processor.get_event_info(event_id)
-  if not event_info then 
-    -- If no specific event info, create a generic highlight on current line
-    local buffer = vim.api.nvim_get_current_buf()
-    local cursor = vim.api.nvim_win_get_cursor(0)
-    local line_num = cursor[1] - 1
+  -- Handle both formats: current SC format [eventId, sound, delta, 1] and future Pulsar format
+  if #args == 4 then
+    -- Current SuperCollider format: [eventId, sound, delta, 1]
+    local event_id = args[1]
+    local sound = tostring(args[2])
+    local duration = (args[3] * 1000) or 500  -- Convert delta to milliseconds
     
-    -- Choose highlight group based on sound hash
-    local sound_hash = 0
-    for i = 1, #sound do
-      sound_hash = sound_hash + string.byte(sound, i)
+    if config.current.debug then
+      vim.notify(string.format("[HighTideLight] Sound-based highlight: %s", sound), vim.log.levels.INFO, {timeout = 2000})
     end
-    local hl_index = (sound_hash % #config.current.highlights.groups) + 1
+    
+    -- Get event info from processor
+    local event_info = processor.get_event_info(event_id)
+    if not event_info then 
+      -- Create a fallback highlight on current line since we don't have deltaContext working yet
+      local buffer = vim.api.nvim_get_current_buf()
+      local cursor = vim.api.nvim_win_get_cursor(0)
+      local row = cursor[1] - 1
+      local line_content = vim.api.nvim_buf_get_lines(buffer, row, row + 1, false)[1] or ""
+      
+      -- Find the sound in the current line
+      local sound_start, sound_end = line_content:find(sound, 1, true)
+      if sound_start then
+        local hl_index = ((event_id - 1) % #config.current.highlights.groups) + 1
+        local hl_group = config.current.highlights.groups[hl_index].name
+        
+        animation.queue_event({
+          event_id = "fallback_" .. event_id .. "_" .. sound,
+          buffer = buffer,
+          row = row,
+          start_col = sound_start - 1,  -- 0-indexed
+          end_col = sound_end - 1,
+          hl_group = hl_group,
+          duration = duration
+        })
+        
+        if config.current.debug then
+          vim.notify(string.format("[HighTideLight] Fallback highlight applied for: %s", sound), vim.log.levels.INFO, {timeout = 2000})
+        end
+      end
+      return
+    end
+    
+    -- Find and highlight the specific sound in markers
+    for i, marker in ipairs(event_info.markers) do
+      if marker.word == sound and marker.type == "sound" then
+        local hl_index = ((i - 1) % #config.current.highlights.groups) + 1
+        local hl_group = config.current.highlights.groups[hl_index].name
+        
+        animation.queue_event({
+          event_id = event_id .. "_" .. sound .. "_" .. i,
+          buffer = event_info.buffer,
+          row = event_info.row,
+          start_col = marker.start_col - 1,  -- Convert to 0-indexed
+          end_col = marker.end_col - 1,
+          hl_group = hl_group,
+          duration = duration
+        })
+        
+        if config.current.debug then
+          vim.notify(string.format("[HighTideLight] Marker-based highlight: %s", sound), vim.log.levels.INFO, {timeout = 2000})
+        end
+        return
+      end
+    end
+    
+  elseif #args == 6 then
+    -- Future Pulsar format: [id, duration, cycle, colStart, eventId, colEnd]
+    local stream_id = args[1]        -- d1=1, d2=2, etc
+    local duration = args[2] * 1000  -- Convert to milliseconds
+    local cycle = args[3]
+    local col_start = args[4]
+    local event_id = args[5]         -- Event ID from deltaContext
+    local col_end = args[6]
+    
+    -- Get event info from processor
+    local event_info = processor.get_event_info(event_id)
+    if not event_info then 
+      if config.current.debug then
+        vim.notify("[HighTideLight] No event info for ID: " .. tostring(event_id), vim.log.levels.WARN, {timeout = 2000})
+      end
+      return
+    end
+    
+    -- Calculate actual column positions using the stored offset
+    local actual_start = event_info.col_offset + col_start
+    local actual_end = event_info.col_offset + col_end
+    
+    -- Choose highlight group based on stream ID
+    local hl_index = ((stream_id - 1) % #config.current.highlights.groups) + 1
     local hl_group = config.current.highlights.groups[hl_index].name
     
-    -- Queue a generic highlight
+    -- Queue the precise highlight
     animation.queue_event({
-      event_id = event_id .. "-generic",
-      buffer = buffer,
-      row = line_num,
-      start_col = 0,
-      end_col = 20, -- Highlight first 20 characters
+      event_id = event_id .. "_" .. col_start .. "_" .. col_end,
+      buffer = event_info.buffer,
+      row = event_info.row,
+      start_col = math.max(0, actual_start),
+      end_col = math.min(#event_info.original_text, actual_end),
       hl_group = hl_group,
-      duration = duration * 1000 -- Convert to milliseconds
+      duration = duration
     })
-    
-    vim.notify(string.format("[HighTideLight] Generic highlight for %s", sound), vim.log.levels.INFO)
-    return
-  end
-  
-  -- Find the marker for this sound
-  for _, marker in ipairs(event_info.markers) do
-    if marker.word == sound then
-      -- Choose highlight group based on cycle or event_id
-      local hl_index = (event_id % #config.current.highlights.groups) + 1
-      local hl_group = config.current.highlights.groups[hl_index].name
-      
-      -- Queue the highlight
-      animation.queue_event({
-        event_id = event_id .. "-" .. marker.start_col, -- Unique ID for this highlight
-        buffer = event_info.buffer,
-        row = event_info.row,
-        start_col = marker.start_col,
-        end_col = marker.end_col,
-        hl_group = hl_group,
-        duration = duration * 1000 -- Convert to milliseconds
-      })
-      
-      vim.notify(string.format("[HighTideLight] Highlighted %s at %d:%d-%d", 
-                sound, event_info.row, marker.start_col, marker.end_col), vim.log.levels.INFO)
-      return -- Stop after finding the first match
+  else
+    if config.current.debug then
+      vim.notify("[HighTideLight] Invalid OSC args count: " .. #args, vim.log.levels.WARN, {timeout = 2000})
     end
   end
-  
-  vim.notify("[HighTideLight] No marker found for sound: " .. sound, vim.log.levels.WARN)
 end
 
 -- Setup function
@@ -171,13 +207,39 @@ function M.setup(opts)
     local buffer = vim.api.nvim_get_current_buf()
     local cursor = vim.api.nvim_win_get_cursor(0)
     animation.queue_event({
-      event_id = 999,
+      event_id = "test_" .. os.time(),
       buffer = buffer,
       row = cursor[1] - 1,
       start_col = 0,
       end_col = 30,
-      hl_group = "TidalEvent1"
+      hl_group = "TidalSoundActive",
+      duration = 1000
     })
+    print("HighTideLight: Test highlight applied")
+  end, {})
+
+  vim.api.nvim_create_user_command('TidalHighlightOSCTest', function()
+    -- Test OSC communication by sending a test message to ourselves
+    local test_args = {999, "test", 500, 1}
+    handle_osc_highlight(test_args, "/editor/highlights")
+    print("HighTideLight: OSC test message processed")
+  end, {})
+  
+  vim.api.nvim_create_user_command('TidalHighlightStatus', function()
+    local active_count = highlights.get_active_count()
+    local debug_status = cfg.debug and "ON" or "OFF"
+    print(string.format("HighTideLight: %s | Active highlights: %d | Debug: %s", 
+          M.enabled and "ENABLED" or "DISABLED", active_count, debug_status))
+  end, {})
+  
+  vim.api.nvim_create_user_command('TidalHighlightDebug', function()
+    local debug_module = require('tidal-highlight.debug')
+    debug_module.show_loaded_files()
+  end, {})
+  
+  vim.api.nvim_create_user_command('TidalHighlightReload', function()
+    local debug_module = require('tidal-highlight.debug')
+    debug_module.reload_plugin()
   end, {})
   
   vim.api.nvim_create_user_command('TidalHighlightDiagnostics', function()
@@ -185,8 +247,27 @@ function M.setup(opts)
     diagnostics.run_diagnostics()
   end, {desc = "Run HighTideLight diagnostics"})
   
+  -- Debug command from Pulsar notes
+  vim.api.nvim_create_user_command('TidalHighlightDebugEvents', function()
+    -- Show current event mappings
+    print("Event mappings:")
+    print(vim.inspect(processor.event_ids))
+    
+    -- Show active highlights
+    print("Active highlights:")
+    print(vim.inspect(highlights.active_highlights))
+  end, {desc = "Debug current event mappings and highlights"})
+
+  -- Simulate OSC message for testing
+  vim.api.nvim_create_user_command('TidalHighlightSimulate', function()
+    -- Simulate Pulsar format: [id, duration, cycle, colStart, eventId, colEnd]
+    local test_args = {1, 0.5, 1.0, 0, 1, 10}  -- Stream 1, 500ms duration, positions 0-10 in event 1
+    handle_osc_highlight(test_args, "/editor/highlight")
+    vim.notify("Simulated OSC highlight event", vim.log.levels.INFO, {timeout = 2000})
+  end, {desc = "Simulate OSC highlight message for testing"})
+  
   vim.api.nvim_create_user_command('TidalHighlightLine', function()
-    -- Highlight patterns in the current line
+    -- Highlight ALL components in the current line (like Strudel)
     local buffer = vim.api.nvim_get_current_buf()
     local cursor = vim.api.nvim_win_get_cursor(0)
     local line_num = cursor[1]
@@ -197,41 +278,68 @@ function M.setup(opts)
       return
     end
     
-    -- Process the line to find patterns
+    -- Process the line to find ALL components
     local processed, event_id = processor.process_line(buffer, line_num, line_content)
     local event_info = processor.get_event_info(event_id)
     
     if not event_info or #event_info.markers == 0 then
-      vim.notify("No Tidal patterns found on current line", vim.log.levels.INFO)
+      vim.notify("No Tidal components found on current line", vim.log.levels.INFO)
       return
     end
     
     -- Clear any existing highlights on this line first
     highlights.clear_line(buffer, line_num - 1)
     
-    -- Create highlight events for each pattern
+    -- Highlight each component type with appropriate colors
     for i, marker in ipairs(event_info.markers) do
-      local hl_group_index = ((i - 1) % #config.current.highlights.groups) + 1
-      local hl_group = config.current.highlights.groups[hl_group_index].name
+      local hl_group = "TidalSoundActive" -- Default
       
-      animation.queue_event({
-        event_id = event_id + i,
-        buffer = buffer,
-        row = line_num - 1, -- 0-indexed for Neovim
-        start_col = marker.start_col - 1, -- 0-indexed for Neovim
-        end_col = marker.end_col - 1,
-        hl_group = hl_group
-      })
+      -- Choose highlight based on component type
+      if marker.type == "sound" then
+        local active_groups = {"TidalSoundActive", "TidalSoundActive2", "TidalSoundActive3", "TidalSoundActive4"}
+        hl_group = active_groups[((i - 1) % #active_groups) + 1]
+      elseif marker.type == "function" then
+        hl_group = "TidalFunction"
+      elseif marker.type == "number" then
+        hl_group = "TidalNumber"
+      elseif marker.type == "operator" then
+        hl_group = "TidalOperator"
+      elseif marker.type == "quoted_string" then
+        hl_group = "TidalQuotedString"
+      elseif marker.type == "separator" then
+        hl_group = "TidalSeparator"
+      end
       
-      -- Stagger the highlights slightly for visual effect
-      vim.defer_fn(function() end, i * 100)
+      -- Add slight delay for visual cascade effect
+      vim.defer_fn(function()
+        animation.queue_event({
+          event_id = event_id .. "-preview-" .. i,
+          buffer = buffer,
+          row = line_num - 1, -- 0-indexed for Neovim
+          start_col = marker.start_col - 1, -- 0-indexed for Neovim
+          end_col = marker.end_col - 1,
+          hl_group = hl_group,
+          duration = 2000 -- Show for 2 seconds
+        })
+      end, i * 50) -- Stagger by 50ms
     end
     
-    vim.notify(string.format("Highlighted %d patterns: %s", 
+    -- Show summary
+    local by_type = {}
+    for _, marker in ipairs(event_info.markers) do
+      by_type[marker.type] = (by_type[marker.type] or 0) + 1
+    end
+    
+    local summary_parts = {}
+    for type_name, count in pairs(by_type) do
+      table.insert(summary_parts, count .. " " .. type_name .. (count > 1 and "s" or ""))
+    end
+    
+    vim.notify(string.format("Highlighted %d components: %s", 
               #event_info.markers, 
-              table.concat(vim.tbl_map(function(m) return m.word end, event_info.markers), ", ")), 
+              table.concat(summary_parts, ", ")), 
               vim.log.levels.INFO)
-  end, {desc = "Highlight Tidal patterns in current line"})
+  end, {desc = "Highlight ALL Tidal components in current line (like Strudel)"})
   
   vim.api.nvim_create_user_command('TidalHighlightPlay', function()
     -- Simulate real-time pattern playback highlighting

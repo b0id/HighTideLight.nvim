@@ -99,7 +99,6 @@ end
 
 -- OSC packet parsing
 local function parse_osc_packet(data)
-  vim.notify("[HighTideLight] Parsing OSC packet...", vim.log.levels.INFO)
   local messages = {}
   local offset = 1
   
@@ -122,10 +121,7 @@ local function parse_osc_packet(data)
     -- Single message
     local msg = parse_osc_message(data)
     if msg then
-      vim.notify("[HighTideLight] Parsed message: " .. msg.address, vim.log.levels.INFO)
       table.insert(messages, msg)
-    else
-      vim.notify("[HighTideLight] Failed to parse message.", vim.log.levels.WARN)
     end
   end
   
@@ -209,36 +205,30 @@ function M.start(config)
     M.stop()
   end
   
-  vim.notify("[HighTideLight] Starting OSC server on " .. config.osc.ip .. ":" .. config.osc.port, vim.log.levels.INFO)
   M.server = uv.new_udp()
   M.server:bind(config.osc.ip, config.osc.port, function(err)
       if err then
           vim.schedule(function()
-              vim.notify("OSC BIND error: " .. err, vim.log.levels.ERROR)
+              vim.notify("HighTideLight OSC bind error: " .. err, vim.log.levels.ERROR)
           end)
       end
   end)
   
   M.server:recv_start(function(err, data, addr, flags)
-    vim.schedule(function()
-      vim.notify("[HighTideLight] OSC recv_start callback fired!", vim.log.levels.INFO)
-    end)
     if err then
-      vim.schedule(function()
-        vim.notify("OSC RECV error: " .. err, vim.log.levels.ERROR)
-      end)
+      if config.debug then
+        vim.schedule(function()
+          vim.notify("HighTideLight OSC recv error: " .. err, vim.log.levels.ERROR)
+        end)
+      end
       return
     end
     
     if data then
-      vim.schedule(function()
-        vim.notify("[HighTideLight] Received OSC data!", vim.log.levels.INFO)
-      end)
       local messages = parse_osc_packet(data)
       
       for _, msg in ipairs(messages) do
         vim.schedule(function()
-          vim.notify("[HighTideLight] Dispatching message: " .. msg.address, vim.log.levels.INFO)
           -- Call registered callbacks
           for pattern, callback in pairs(M.callbacks) do
             if msg.address:match(pattern) then
@@ -251,7 +241,7 @@ function M.start(config)
   end)
   
   if config.debug then
-    print(string.format("OSC server listening on %s:%d", config.osc.ip, config.osc.port))
+    print(string.format("HighTideLight OSC server listening on %s:%d", config.osc.ip, config.osc.port))
   end
 end
 
@@ -261,7 +251,6 @@ function M.stop()
     M.server:recv_stop()
     M.server:close()
     M.server = nil
-    vim.notify("[HighTideLight] OSC server stopped.", vim.log.levels.INFO)
   end
 end
 
