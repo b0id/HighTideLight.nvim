@@ -2,6 +2,54 @@
 
 This document outlines the comprehensive testing protocol for developing and maintaining the HighTideLight.nvim plugin locally, without dependencies on external services or Tidal itself.
 
+## 🎯 Testing the 6-Argument Implementation (NEW)
+
+### Step 1: Test Processor (deltaContext injection)
+
+1. Create a test Tidal file with this content:
+```
+d1 $ sound "bd sn hh"
+d2 $ sound "kick clap"
+```
+
+2. Place cursor on first line and run:
+```vim
+:TidalHighlightDebugPipeline
+```
+
+**Expected Output**:
+- Should show processed line with `-- deltaContext X Y` comment
+- Event ID should be created
+- Column offset should be calculated
+
+### Step 2: Test 6-Argument OSC Handler
+
+```vim
+:TidalHighlight6ArgTest
+```
+
+**Expected**: Should apply precise highlight at columns 10-15
+
+### Step 3: Test SuperCollider deltaContext Extraction
+
+1. Load the SuperCollider helper:
+```supercollider
+// Load the updated helper
+(
+"path/to/HighTideLightOSC.scd".load;
+)
+```
+
+2. Test the new 6-argument format:
+```supercollider
+~send6ArgHighlight.(0, 0.5, 1, 8, 1001, 10);
+```
+
+3. Run the test sequence:
+```supercollider
+~test6ArgSequence.();
+```
+
 ## Overview
 
 HighTideLight.nvim uses OSC (Open Sound Control) to communicate with Tidal for real-time highlighting. The testing system provides:
