@@ -8,42 +8,60 @@ local animation = require('tidal-highlight.animation')
 local M = {}
 M.enabled = false
 
--- Hook into Tidal evaluation using compatibility layer
-local function wrap_tidal_send()
+-- Hook into Tidal API to catch ALL evaluation types (not just send_line)
+local function wrap_tidal_api()
+  -- Check if tidal.nvim is available
+  local ok, tidal = pcall(require, 'tidal')
+  if not ok or not tidal.api then
+    if config.current.debug then
+      vim.notify("HighTideLight: tidal.nvim API not found, falling back to compat layer", vim.log.levels.WARN)
+    end
+    return wrap_tidal_send_fallback()
+  end
+  
+  local api = tidal.api
+  
+  -- Store original functions
+  local orig_send = api.send
+  local orig_send_multiline = api.send_multiline
+  
+  -- Hook api.send (single line evaluations)
+  api.send = function(text)
+    if M.enabled then
+      if config.current.debug then
+        vim.notify("[HighTideLight] API HOOK: send() called with: " .. text:sub(1, 50), vim.log.levels.INFO, {timeout = 1000})
+      end
+      M.ingest_tidal_text(text)
+    end
+    return orig_send(text)
+  end
+  
+  -- Hook api.send_multiline (block evaluations)
+  api.send_multiline = function(lines)
+    if M.enabled then
+      local block = table.concat(lines, "\n")
+      if config.current.debug then
+        vim.notify("[HighTideLight] API HOOK: send_multiline() called with: " .. block:sub(1, 50), vim.log.levels.INFO, {timeout = 1000})
+      end
+      M.ingest_tidal_text(block)
+    end
+    return orig_send_multiline(lines)
+  end
+  
+  if config.current.debug then
+    vim.notify("HighTideLight: Hooked tidal.nvim API (send + send_multiline)", vim.log.levels.INFO)
+  end
+  
+  return true
+end
+
+-- Fallback to compatibility layer if tidal.nvim API unavailable
+local function wrap_tidal_send_fallback()
   local compat = require('tidal-highlight.compat')
   
   local success, result = compat.hook_tidal_evaluation(function(buffer, line_num, code)
-    if not M.enabled then return end
-    
-    -- Process the code
-    local processed, event_id = processor.process_line(buffer, line_num, code)
-    
-    -- NEW: Send position mapping to SuperCollider when we process patterns
-    if processed ~= code then
-      local event_info = processor.get_event_info(event_id)
-      if event_info and event_info.markers then
-        
-        -- Send pattern registration with position data to SuperCollider
-        osc.send("/tidal/pattern", 
-                 {event_id, event_info.original_text, event_info.col_offset or 0}, 
-                 config.current.supercollider.ip, 
-                 config.current.supercollider.port)
-        
-        -- Send individual sound positions to SuperCollider
-        for i, marker in ipairs(event_info.markers) do
-          if marker.type == "sound" then
-            osc.send("/tidal/sound_position", 
-                     {event_id, marker.word, marker.start_col, marker.end_col}, 
-                     config.current.supercollider.ip, 
-                     config.current.supercollider.port)
-          end
-        end
-        
-        if config.current.debug then
-          vim.notify(string.format("[HighTideLight] Sent pattern mapping: eventId=%d sounds=%d", 
-                    event_id, #event_info.markers), vim.log.levels.INFO, {timeout = 1000})
-        end
-      end
+    if M.enabled then
+      M.ingest_tidal_text(code)
     end
   end)
   
@@ -54,15 +72,112 @@ local function wrap_tidal_send()
     return false
   end
   
-  if config.current.debug then
-    vim.notify("HighTideLight: " .. result, vim.log.levels.INFO)
+  return true
+end
+
+-- Process incoming Tidal text (from API hooks or compat layer)
+function M.ingest_tidal_text(text)
+  local raw_text = text
+  
+  -- Strip GHCi wrappers (:{  :})
+  text = text:gsub("^%s*:%{?%s*\n", "")
+  text = text:gsub("\n%s*:%}%s*$", "")
+  
+  -- Split into lines and find first pattern header
+  local lines = {}
+  for line in (text.."\n"):gmatch("(.-)\n") do 
+    table.insert(lines, line) 
   end
   
-  return true
+  local pattern_info = M.find_pattern_header(lines)
+  if not pattern_info then
+    if config.current.debug then
+      vim.notify("[HighTideLight] SKIP: no dN/p N header found in: " .. text:sub(1, 50), vim.log.levels.DEBUG, {timeout = 1000})
+    end
+    return
+  end
+  
+  -- Compute orbit (what SuperCollider actually reports)
+  local stream_id = pattern_info.n
+  local orbit_override = M.find_orbit_hint(text)
+  local orbit = orbit_override or (stream_id - 1)  -- default: d1=0, d2=1, etc.
+  
+  -- Process the pattern text
+  local processed, event_id = processor.process_line(1, 1, text)
+  
+  if processed ~= text then
+    local event_info = processor.get_event_info(event_id)
+    if event_info and event_info.markers then
+      
+      -- Store by ORBIT (what SuperDirt reports) not eventId
+      M.pattern_store = M.pattern_store or {}
+      M.pattern_store[orbit] = {
+        stream_id = stream_id,
+        event_id = event_id,
+        text = text,
+        raw_text = raw_text,
+        markers = event_info.markers,
+        buffer = vim.api.nvim_get_current_buf(),
+        row = vim.api.nvim_win_get_cursor(0)[1] - 1,  -- 0-indexed row
+        timestamp = vim.loop.now()
+      }
+      
+      -- Send to SuperCollider with orbit as key
+      osc.send("/tidal/pattern", 
+               {orbit, text, event_info.col_offset or 0}, 
+               config.current.supercollider.ip, 
+               config.current.supercollider.port)
+      
+      -- Send individual sound positions
+      for i, marker in ipairs(event_info.markers) do
+        if marker.type == "sound" then
+          osc.send("/tidal/sound_position", 
+                   {orbit, marker.word, marker.start_col, marker.end_col}, 
+                   config.current.supercollider.ip, 
+                   config.current.supercollider.port)
+        end
+      end
+      
+      if config.current.debug then
+        vim.notify(string.format("[HighTideLight] Stored pattern: orbit=%d stream=d%d sounds=%d", 
+                  orbit, stream_id, #event_info.markers), vim.log.levels.INFO, {timeout = 1000})
+      end
+    end
+  end
+end
+
+-- Find first pattern header in lines (dN or p N)
+function M.find_pattern_header(lines)
+  for _, line in ipairs(lines) do
+    local trimmed = line:match("^%s*(.-)%s*$") or line
+    
+    -- dN form: d1, d2, etc.
+    local dN = trimmed:match("^d(%d+)%f[%W]")
+    if dN then 
+      return {kind="d", n=tonumber(dN), line=line} 
+    end
+    
+    -- p N form: p 1, p 2, etc.
+    local pN = trimmed:match("^p%s+(%d+)%f[%W]")
+    if pN then 
+      return {kind="p", n=tonumber(pN), line=line} 
+    end
+  end
+  return nil
+end
+
+-- Find orbit override hint (# orbit N)
+function M.find_orbit_hint(text)
+  local hit = text:match("#%s*orbit%s+([%d]+)")
+  return hit and tonumber(hit) or nil
 end
 
 -- Handle incoming OSC highlight events with precise position mapping
 local function handle_osc_highlight(args, address)
+  -- ALWAYS log OSC reception for debugging
+  vim.notify(string.format("[HighTideLight] OSC RECEIVED: %s with %d args: %s", 
+    address, #args, vim.inspect(args)), vim.log.levels.INFO, {timeout = 3000})
+  
   if config.current.debug then
     -- Make debug messages transient (disappear after 2 seconds)
     vim.notify(string.format("[HighTideLight] OSC %s: %s", address, vim.inspect(args)), vim.log.levels.DEBUG, {timeout = 2000})
@@ -70,30 +185,32 @@ local function handle_osc_highlight(args, address)
   
   -- Handle both old 4-arg and new 6-arg formats
   if #args == 6 then
-    -- NEW 6-argument Pulsar format: [id, duration, cycle, colStart, eventId, colEnd]
-    local stream_id = args[1]     -- d1=0, d2=1, etc
+    -- NEW 6-argument format: [streamId, delta, cycle, colStart, eventId, colEnd]
+    -- This matches what SuperCollider actually sends
+    local stream_id = args[1]      -- orbit (d1=0, d2=1, etc)
     local duration = (args[2] * 1000) or 500  -- Convert delta to milliseconds
-    local cycle = args[3]
-    local col_start = args[4] - 1  -- Convert to 0-indexed
-    local event_id = args[5]
-    local col_end = args[6] - 1    -- Convert to 0-indexed
+    local cycle = args[3]          -- cycle
+    local col_start = args[4]      -- start column (already 0-indexed from processor)
+    local event_id = args[5]       -- event ID from SuperDirt
+    local col_end = args[6]        -- end column (already 0-indexed from processor)
     
     if config.current.debug then
-      vim.notify(string.format("[HighTideLight] 6-arg format: stream=%d eventId=%d cols=%d-%d", 
+      vim.notify(string.format("[HighTideLight] 6-arg PRECISION: stream=%d eventId=%d cols=%d-%d", 
         stream_id, event_id, col_start, col_end), vim.log.levels.INFO, {timeout = 2000})
     end
     
-    -- Get event info from processor
-    local event_info = processor.get_event_info(event_id)
-    if event_info then
-      -- Use exact position data from OSC
-      local hl_index = ((stream_id) % #config.current.highlights.groups) + 1
+    -- Find the event info by orbit in our pattern store
+    if M.pattern_store and M.pattern_store[stream_id] then
+      local stored_pattern = M.pattern_store[stream_id]
+      
+      -- Create animation event
+      local hl_index = (stream_id % #config.current.highlights.groups) + 1
       local hl_group = config.current.highlights.groups[hl_index].name
       
       animation.queue_event({
-        event_id = "precise_" .. event_id .. "_" .. col_start,
-        buffer = event_info.buffer,
-        row = event_info.row,
+        event_id = "precision_" .. stream_id .. "_" .. col_start .. "_" .. vim.loop.now(),
+        buffer = stored_pattern.buffer or vim.api.nvim_get_current_buf(),
+        row = stored_pattern.row or 0,  -- We'll need to track this better
         start_col = col_start,
         end_col = col_end,
         hl_group = hl_group,
@@ -101,13 +218,73 @@ local function handle_osc_highlight(args, address)
       })
       
       if config.current.debug then
-        vim.notify(string.format("[HighTideLight] Precise highlight applied: cols %d-%d", 
-          col_start, col_end), vim.log.levels.INFO, {timeout = 2000})
+        vim.notify(string.format("[HighTideLight] PRECISION highlight applied: orbit=%d cols=%d-%d", 
+          stream_id, col_start, col_end), vim.log.levels.INFO, {timeout = 1000})
       end
     else
       if config.current.debug then
-        vim.notify(string.format("[HighTideLight] No event info for precise eventId: %d", event_id), 
+        vim.notify(string.format("[HighTideLight] No pattern store for orbit: %d", stream_id), 
           vim.log.levels.WARN, {timeout = 2000})
+      end
+    end
+    
+  elseif #args == 5 then
+    -- NEW 5-argument stream-correlated format: [streamId, sound, delta, cycle, superdirtEventId]
+    local stream_id = args[1]    -- d1=0, d2=1, etc.
+    local sound = tostring(args[2])
+    local duration = (args[3] * 1000) or 500  -- Convert delta to milliseconds
+    local cycle = args[4]
+    local superdirt_event_id = args[5]
+    
+    if config.current.debug then
+      vim.notify(string.format("[HighTideLight] 5-arg stream-correlated: stream=%d sound='%s'", 
+        stream_id, sound), vim.log.levels.INFO, {timeout = 2000})
+    end
+    
+    -- Find most recent pattern for this stream
+    local event_info = nil
+    local most_recent_time = 0
+    
+    for stored_event_id, stored_info in pairs(processor.event_ids or {}) do
+      if stored_info.stream_id == stream_id and stored_info.timestamp > most_recent_time then
+        most_recent_time = stored_info.timestamp
+        event_info = stored_info
+      end
+    end
+    
+    if event_info then
+      -- Find and highlight the specific sound in markers
+      for i, marker in ipairs(event_info.markers) do
+        if marker.word == sound and marker.type == "sound" then
+          local hl_index = ((stream_id) % #config.current.highlights.groups) + 1
+          local hl_group = config.current.highlights.groups[hl_index].name
+          
+          animation.queue_event({
+            event_id = "stream_" .. stream_id .. "_" .. sound .. "_" .. superdirt_event_id,
+            buffer = event_info.buffer,
+            row = event_info.row,
+            start_col = marker.start_col - 1,  -- Convert to 0-indexed
+            end_col = marker.end_col - 1,
+            hl_group = hl_group,
+            duration = duration
+          })
+          
+          if config.current.debug then
+            vim.notify(string.format("[HighTideLight] ✨ PRECISION HIT! stream=%d sound='%s' cols=%d-%d", 
+              stream_id, sound, marker.start_col - 1, marker.end_col - 1), vim.log.levels.INFO, {timeout = 2000})
+          end
+          return
+        end
+      end
+      
+      if config.current.debug then
+        vim.notify(string.format("[HighTideLight] Sound '%s' not found in stream %d pattern", 
+          sound, stream_id), vim.log.levels.WARN, {timeout = 2000})
+      end
+    else
+      if config.current.debug then
+        vim.notify(string.format("[HighTideLight] No pattern data for stream %d", 
+          stream_id), vim.log.levels.WARN, {timeout = 2000})
       end
     end
     
@@ -122,10 +299,28 @@ local function handle_osc_highlight(args, address)
         vim.log.levels.INFO, {timeout = 2000})
     end
     
-    -- Get event info from processor
-    local event_info = processor.get_event_info(event_id)
+    -- NEW: Find event info by stream correlation instead of event ID
+    local event_info = nil
+    local stream_id = 0  -- d1 = 0, d2 = 1, etc.
+    
+    -- First try direct event ID lookup
+    event_info = processor.get_event_info(event_id)
+    
+    -- If not found, find most recent pattern for this stream
+    if not event_info then
+      local processor_module = processor
+      local most_recent_time = 0
+      
+      for stored_event_id, stored_info in pairs(processor_module.event_ids or {}) do
+        if stored_info.stream_id == stream_id and stored_info.timestamp > most_recent_time then
+          most_recent_time = stored_info.timestamp
+          event_info = stored_info
+        end
+      end
+    end
+    
     if not event_info then 
-      -- Create a fallback highlight on current line since we don't have deltaContext working yet
+      -- Create a fallback highlight on current line
       local buffer = vim.api.nvim_get_current_buf()
       local cursor = vim.api.nvim_win_get_cursor(0)
       local row = cursor[1] - 1
@@ -243,7 +438,7 @@ function M.setup(opts)
   
   -- Hook into Tidal
   vim.defer_fn(function()
-    wrap_tidal_send()
+    wrap_tidal_api()
   end, 100)
   
   -- Commands
@@ -513,6 +708,53 @@ function M.setup(opts)
       end
     end
   })
+
+  -- Debug commands
+  vim.api.nvim_create_user_command('TidalHighlightDebugPipeline', function()
+    -- Test the orbit-based pipeline
+    M.ingest_tidal_text('d1 $ sound "bd sn hh"')
+    vim.notify("[HighTideLight] Debug pipeline triggered", vim.log.levels.INFO)
+  end, {})
+
+  vim.api.nvim_create_user_command('TidalHighlightDebugAPI', function()
+    local ok, tidal = pcall(require, 'tidal')
+    if ok and tidal.api then
+      vim.notify("[HighTideLight] tidal.nvim API available: " .. vim.inspect(vim.tbl_keys(tidal.api)), vim.log.levels.INFO)
+    else
+      vim.notify("[HighTideLight] tidal.nvim API NOT available", vim.log.levels.WARN)
+    end
+  end, {})
+
+  vim.api.nvim_create_user_command('TidalHighlightDebugState', function()
+    vim.notify("=== HighTideLight Debug State ===", vim.log.levels.INFO)
+    vim.notify("Enabled: " .. tostring(M.enabled), vim.log.levels.INFO)
+    vim.notify("Pattern store: " .. vim.inspect(M.pattern_store or {}), vim.log.levels.INFO)
+    vim.notify("OSC config: " .. vim.inspect(config.current.osc), vim.log.levels.INFO)
+    vim.notify("SuperCollider config: " .. vim.inspect(config.current.supercollider), vim.log.levels.INFO)
+  end, {})
+
+  vim.api.nvim_create_user_command('TidalHighlightDebugOSC', function()
+    -- Send a test OSC message to SuperCollider
+    local osc = require('tidal-highlight.osc')
+    osc.send("/debug/test", {999, "test"}, config.current.supercollider.ip, config.current.supercollider.port)
+    vim.notify("[HighTideLight] Sent test OSC to SuperCollider", vim.log.levels.INFO)
+  end, {})
+
+  vim.api.nvim_create_user_command('TidalHighlightForceHighlight', function()
+    -- Force a highlight on current line for testing
+    local row = vim.api.nvim_win_get_cursor(0)[1] - 1
+    local animation = require('tidal-highlight.animation')
+    animation.queue_event({
+      event_id = "test_" .. vim.loop.now(),
+      buffer = vim.api.nvim_get_current_buf(),
+      row = row,
+      start_col = 0,
+      end_col = 10,
+      hl_group = "HighTideLightSound1",
+      duration = 1000
+    })
+    vim.notify("[HighTideLight] Forced test highlight on current line", vim.log.levels.INFO)
+  end, {})
 end
 
 return M

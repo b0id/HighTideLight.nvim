@@ -67,24 +67,33 @@ function M.hook_grddavies_tidal(processor_callback)
   message.tidal.send_line = function(text)
     local processed_text = text
     
-    -- Process the code before sending
+    -- Process the code FIRST and send position data IMMEDIATELY
     if processor_callback and text and #text > 0 then
       local buffer = vim.api.nvim_get_current_buf()
       local cursor = vim.api.nvim_win_get_cursor(0)
       local processor = require('tidal-highlight.processor')
+      
+      -- CRITICAL: Process and store position data BEFORE sending to Tidal
       local processed, event_id = processor.process_line(buffer, cursor[1], text)
       
-      -- Call the callback for tracking
+      -- Call the callback for tracking (this sends OSC data to SuperCollider)
       processor_callback(buffer, cursor[1], text)
       
-      -- Use the processed code if it changed
-      if processed ~= text then
-        processed_text = processed
+      -- Add debug logging
+      local config = require('tidal-highlight.config')
+      if config.current.debug then
+        vim.schedule(function()
+          vim.notify(string.format("[HighTideLight] Hook processed: eventId=%d text='%s'", 
+            event_id or 0, text), vim.log.levels.INFO, {timeout = 1000})
+        end)
       end
+      
+      -- Use the processed code if it changed (but for now, send original to avoid syntax issues)
+      -- processed_text = processed  -- Disabled until deltaContext syntax is perfected
     end
     
-    -- Call original function with potentially modified text
-    return original_send_line(processed_text)
+    -- Call original function
+    return original_send_line(text)  -- Send original text, not processed
   end
   
   return true, "Hooked into tidal.core.message.tidal.send_line"

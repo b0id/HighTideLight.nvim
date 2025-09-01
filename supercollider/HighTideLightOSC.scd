@@ -31,47 +31,47 @@
         streamId, duration, cycle, colStart, colEnd, eventId).postln;
 };
 
-// Pattern position storage
-~tidalPatterns = Dictionary.new;
-~soundPositions = Dictionary.new;
+// Pattern position storage - NOW KEYED BY ORBIT (what SuperDirt reports)
+~tidalPatterns = Dictionary.new;    // orbit -> pattern data
+~soundPositions = Dictionary.new;   // orbit -> sound position mapping
 
-// NEW: Listen for pattern registration from Neovim
+// NEW: Listen for pattern registration from Neovim (orbit-based)
 OSCdef(\tidalPattern, { |msg, time, addr, recvPort|
-    var eventId, originalText, colOffset;
-    eventId = msg[1];
+    var orbit, originalText, colOffset;
+    orbit = msg[1];  // Changed from eventId to orbit
     originalText = msg[2];
     colOffset = msg[3];
     
-    ~tidalPatterns[eventId] = (
+    ~tidalPatterns[orbit] = (
         text: originalText,
         colOffset: colOffset,
         timestamp: time
     );
     
     if(~highlightDebug == true) {
-        ("📝 Stored pattern mapping: eventId=% text='%' colOffset=%".format(eventId, originalText, colOffset)).postln;
+        ("📝 Stored pattern mapping: orbit=% text='%' colOffset=%".format(orbit, originalText, colOffset)).postln;
     };
 }, '/tidal/pattern');
 
-// NEW: Listen for sound position data from Neovim
+// NEW: Listen for sound position data from Neovim (orbit-based)
 OSCdef(\tidalSoundPosition, { |msg, time, addr, recvPort|
-    var eventId, sound, startCol, endCol;
-    eventId = msg[1];
+    var orbit, sound, startCol, endCol;
+    orbit = msg[1];  // Changed from eventId to orbit
     sound = msg[2];
     startCol = msg[3];
     endCol = msg[4];
     
-    if(~soundPositions[eventId].isNil) {
-        ~soundPositions[eventId] = Dictionary.new;
+    if(~soundPositions[orbit].isNil) {
+        ~soundPositions[orbit] = Dictionary.new;
     };
     
-    ~soundPositions[eventId][sound] = (
+    ~soundPositions[orbit][sound] = (
         startCol: startCol,
         endCol: endCol
     );
     
     if(~highlightDebug == true) {
-        ("🎵 Stored sound position: eventId=% sound='%' cols=%-% ".format(eventId, sound, startCol, endCol)).postln;
+        ("🎵 Stored sound position: orbit=% sound='%' cols=%-% ".format(orbit, sound, startCol, endCol)).postln;
     };
 }, '/tidal/sound_position');
 
@@ -93,7 +93,7 @@ AppClock.sched(5.0, {  // Increased delay from 2 to 5 seconds
         // Wrap with highlight extraction using stored position data
         ~dirt.receiveAction = { |msg|
             var latency, event, eventId, sound, delta, cycle, colStart, colEnd, streamId;
-            var patternInfo, soundInfo, matchingEventId;
+            var patternInfo, soundInfo, matchingEventId, mostRecentTime;
 
             // DEBUG: Post the message structure if needed
             if(~highlightDebug == true) {
@@ -110,37 +110,29 @@ AppClock.sched(5.0, {  // Increased delay from 2 to 5 seconds
                 eventId = msg[\eventId] ? msg[\id] ? msg[\_id_] ? 1;
                 delta = msg[\delta] ? 0.25;
                 cycle = msg[\cycle] ? 1;
-                streamId = msg[\orbit] ? 0; // d1=0, d2=1, etc.
+                streamId = msg[\orbit] ? 0; // orbit is what we key by
                 
-                // NEW: Look for matching pattern in our stored data
-                // Find the most recent pattern registration for this orbit/stream
-                matchingEventId = nil;
-                ~tidalPatterns.keysValuesDo({ |storedEventId, patternData|
-                    // For now, just use the most recent pattern
-                    // TODO: Better matching based on stream/orbit
-                    matchingEventId = storedEventId;
-                });
-                
-                if(matchingEventId.notNil and: ~soundPositions[matchingEventId].notNil) {
-                    soundInfo = ~soundPositions[matchingEventId][sound.asSymbol];
+                // NEW: Direct orbit-based lookup (matches what Neovim sends)
+                if(~soundPositions[streamId].notNil) {
+                    soundInfo = ~soundPositions[streamId][sound.asSymbol];
                     
                     if(soundInfo.notNil) {
                         // We have precise position data!
                         colStart = soundInfo.startCol;
                         colEnd = soundInfo.endCol;
                         
-                        // Send 6-argument format: [id, duration, cycle, colStart, eventId, colEnd]
+                        // Send 6-argument format: [streamId, duration, cycle, colStart, eventId, colEnd]
                         ~neovimOSC.sendMsg("/editor/highlights", 
-                            streamId,           // stream ID (d1=0, d2=1, etc)
+                            streamId,           // orbit (d1=0, d2=1, etc)
                             delta,              // duration
                             cycle,              // cycle
                             colStart,           // start column in pattern
-                            matchingEventId,    // event ID from Neovim
+                            eventId,            // event ID from SuperDirt
                             colEnd              // end column in pattern
                         );
                         
-                        ("🚀 PRECISION HIT! stream=% sound='%' cols=%-% eventId=%".format(
-                            streamId, sound, colStart, colEnd, matchingEventId)).postln;
+                        ("🚀 PRECISION HIT! orbit=% sound='%' cols=%-% eventId=%".format(
+                            streamId, sound, colStart, colEnd, eventId)).postln;
                     } {
                         if(~highlightDebug == true) {
                             ("❌ No position data for sound: " ++ sound).postln;
@@ -152,7 +144,7 @@ AppClock.sched(5.0, {  // Increased delay from 2 to 5 seconds
                     };
                 } {
                     if(~highlightDebug == true) {
-                        ("❌ No stored pattern data found").postln;
+                        ("❌ No stored pattern data for orbit: " ++ streamId).postln;
                     };
                     
                     // Fallback to 4-argument format
@@ -183,28 +175,28 @@ AppClock.sched(5.0, {  // Increased delay from 2 to 5 seconds
     };
 });
 
-// Test function to simulate pattern registration from Neovim
+// Test function to simulate pattern registration from Neovim (orbit-based)
 ~simulatePatternRegistration = {
-    var eventId = 1001;
+    var orbit = 0;  // d1 = orbit 0
     var testPatternData = "d1 $ s 'bd cp bd cp' # room 0.3";  // Simple test pattern
     var soundPositions;
     
-    "🔬 TESTING: Simulating pattern registration...".postln;
+    "🔬 TESTING: Simulating orbit-based pattern registration...".postln;
     
     // Simulate position data that would come from deltaContext injection
     soundPositions = Dictionary.new;
     soundPositions[\bd] = (startCol: 7, endCol: 9);      // "bd" at positions 7-9
     soundPositions[\cp] = (startCol: 10, endCol: 12);    // "cp" at positions 10-12
     
-    // Store the test data
-    ~tidalPatterns[eventId] = (
-        pattern: testPatternData,
+    // Store the test data by ORBIT
+    ~tidalPatterns[orbit] = (
+        text: testPatternData,
         timestamp: SystemClock.seconds
     );
     
-    ~soundPositions[eventId] = soundPositions;
+    ~soundPositions[orbit] = soundPositions;
     
-    ("✅ Stored test pattern with eventId: " ++ eventId).postln;
+    ("✅ Stored test pattern with orbit: " ++ orbit).postln;
     ("📍 Sound positions: bd=7-9, cp=10-12").postln;
     ("📋 Data stored in ~tidalPatterns and ~soundPositions").postln;
     
@@ -212,16 +204,16 @@ AppClock.sched(5.0, {  // Increased delay from 2 to 5 seconds
     ~showPatternData.();
 };
 
-// Function to display stored pattern and position data
+// Function to display stored pattern and position data (orbit-based)
 ~showPatternData = {
-    "📋 STORED PATTERN DATA:".postln;
-    ~tidalPatterns.keysValuesDo({ |eventId, data|
-        ("EventID: % | Pattern: %".format(eventId, data.pattern)).postln;
+    "📋 STORED PATTERN DATA (by orbit):".postln;
+    ~tidalPatterns.keysValuesDo({ |orbit, data|
+        ("Orbit: % | Pattern: %".format(orbit, data.text)).postln;
     });
     
-    "📍 STORED POSITION DATA:".postln;
-    ~soundPositions.keysValuesDo({ |eventId, positions|
-        ("EventID: %".format(eventId)).postln;
+    "📍 STORED POSITION DATA (by orbit):".postln;
+    ~soundPositions.keysValuesDo({ |orbit, positions|
+        ("Orbit: %".format(orbit)).postln;
         positions.keysValuesDo({ |sound, pos|
             ("  Sound: % -> cols %-% ".format(sound, pos.startCol, pos.endCol)).postln;
         });
