@@ -1,0 +1,12 @@
+/home/b0id/github/HighTideLight.nvim/tidal-osc-bridge/target/release/deps/librosc-c962199d338cfb23.rmeta: /home/b0id/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosc-0.10.1/src/lib.rs /home/b0id/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosc-0.10.1/src/errors.rs /home/b0id/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosc-0.10.1/src/types.rs /home/b0id/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosc-0.10.1/src/address.rs /home/b0id/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosc-0.10.1/src/decoder.rs /home/b0id/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosc-0.10.1/src/encoder.rs
+
+/home/b0id/github/HighTideLight.nvim/tidal-osc-bridge/target/release/deps/librosc-c962199d338cfb23.rlib: /home/b0id/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosc-0.10.1/src/lib.rs /home/b0id/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosc-0.10.1/src/errors.rs /home/b0id/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosc-0.10.1/src/types.rs /home/b0id/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosc-0.10.1/src/address.rs /home/b0id/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosc-0.10.1/src/decoder.rs /home/b0id/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosc-0.10.1/src/encoder.rs
+
+/home/b0id/github/HighTideLight.nvim/tidal-osc-bridge/target/release/deps/rosc-c962199d338cfb23.d: /home/b0id/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosc-0.10.1/src/lib.rs /home/b0id/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosc-0.10.1/src/errors.rs /home/b0id/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosc-0.10.1/src/types.rs /home/b0id/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosc-0.10.1/src/address.rs /home/b0id/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosc-0.10.1/src/decoder.rs /home/b0id/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosc-0.10.1/src/encoder.rs
+
+/home/b0id/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosc-0.10.1/src/lib.rs:
+/home/b0id/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosc-0.10.1/src/errors.rs:
+/home/b0id/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosc-0.10.1/src/types.rs:
+/home/b0id/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosc-0.10.1/src/address.rs:
+/home/b0id/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosc-0.10.1/src/decoder.rs:
+/home/b0id/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosc-0.10.1/src/encoder.rs:

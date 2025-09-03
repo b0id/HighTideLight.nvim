@@ -5,7 +5,7 @@ M.defaults = {
   enabled = true,
   osc = {
     ip = "127.0.0.1",
-    port = 6011,  -- Different from SuperDirt's 6010
+    port = 6011,  -- Different from SuperDirt's 6010, matches bridge target
   },
   supercollider = {
     ip = "127.0.0.1",
@@ -17,9 +17,19 @@ M.defaults = {
     decay_style = "fade", -- "fade", "pulse", "instant"
   },
   highlights = {
-    -- Define highlight groups for different component types (like Strudel)
+    -- Define highlight groups for different component types and streams
     groups = {
-      -- Active sound highlights (when playing)
+      -- Stream-specific highlights (d1-d8)
+      { name = "TidalHighlight1", fg = "#ff6b6b", bg = "#2a1a1a", blend = 0, bold = true },  -- Red for d1
+      { name = "TidalHighlight2", fg = "#4ecdc4", bg = "#1a2a2a", blend = 0, bold = true },  -- Cyan for d2
+      { name = "TidalHighlight3", fg = "#45b7d1", bg = "#1a1a2a", blend = 0, bold = true },  -- Blue for d3
+      { name = "TidalHighlight4", fg = "#96ceb4", bg = "#1a2a1a", blend = 0, bold = true },  -- Green for d4
+      { name = "TidalHighlight5", fg = "#ffa500", bg = "#2a2a1a", blend = 0, bold = true },  -- Orange for d5
+      { name = "TidalHighlight6", fg = "#ff69b4", bg = "#2a1a2a", blend = 0, bold = true },  -- Pink for d6
+      { name = "TidalHighlight7", fg = "#dda0dd", bg = "#2a1a2a", blend = 0, bold = true },  -- Plum for d7
+      { name = "TidalHighlight8", fg = "#87ceeb", bg = "#1a2a2a", blend = 0, bold = true },  -- Sky blue for d8
+      
+      -- Legacy active sound highlights (for backward compatibility)
       { name = "TidalSoundActive", fg = "#ff6b6b", bg = "#2a1a1a", blend = 0, bold = true },
       { name = "TidalSoundActive2", fg = "#4ecdc4", bg = "#1a2a2a", blend = 0, bold = true },
       { name = "TidalSoundActive3", fg = "#45b7d1", bg = "#1a1a2a", blend = 0, bold = true },

@@ -15,6 +15,18 @@ local function wrap_tidal_send()
   local success, result = compat.hook_tidal_evaluation(function(buffer, line_num, code)
     if not M.enabled then return end
     
+    -- Clear existing highlights on this line before processing
+    processor.clear_line_highlights(buffer, line_num)
+    
+    -- Check if this is a hush/silence command
+    if processor.is_hush_command(code) then
+      processor.clear_all_highlights()
+      if config.current.debug then
+        vim.notify("[HighTideLight] Cleared all highlights (hush command)", vim.log.levels.INFO, {timeout = 2000})
+      end
+      return
+    end
+    
     -- Process the code
     local processed, event_id = processor.process_line(buffer, line_num, code)
     
@@ -49,7 +61,7 @@ local function handle_osc_highlight(args, address)
     vim.notify(string.format("[HighTideLight] OSC %s: %s", address, vim.inspect(args)), vim.log.levels.DEBUG, {timeout = 2000})
   end
   
-  -- Handle both formats: current SC format [eventId, sound, delta, 1] and future Pulsar format
+  -- Handle both formats: current SC format [eventId, sound, delta, 1] and new Tidal format
   if #args == 4 then
     -- Current SuperCollider format: [eventId, sound, delta, 1]
     local event_id = args[1]
@@ -116,41 +128,71 @@ local function handle_osc_highlight(args, address)
     end
     
   elseif #args == 6 then
-    -- Future Pulsar format: [id, duration, cycle, colStart, eventId, colEnd]
+    -- New Tidal format from Rust bridge: [stream_id, duration, cycle, start_col, event_id, end_col]
     local stream_id = args[1]        -- d1=1, d2=2, etc
     local duration = args[2] * 1000  -- Convert to milliseconds
     local cycle = args[3]
-    local col_start = args[4]
+    local start_col = args[4]
     local event_id = args[5]         -- Event ID from deltaContext
-    local col_end = args[6]
+    local end_col = args[6]
     
-    -- Get event info from processor
-    local event_info = processor.get_event_info(event_id)
-    if not event_info then 
-      if config.current.debug then
-        vim.notify("[HighTideLight] No event info for ID: " .. tostring(event_id), vim.log.levels.WARN, {timeout = 2000})
-      end
-      return
+    if config.current.debug then
+      vim.notify(string.format("[HighTideLight] Position-based highlight: stream=%d, cols=%d..%d, duration=%.1fms", 
+                stream_id, start_col, end_col, duration), vim.log.levels.INFO, {timeout = 2000})
     end
     
-    -- Calculate actual column positions using the stored offset
-    local actual_start = event_info.col_offset + col_start
-    local actual_end = event_info.col_offset + col_end
+    -- Find the current Tidal buffer (look for .tidal files or tidalcycles filetype)
+    local target_buffer = nil
+    local target_row = 0
+    
+    -- Try to find open Tidal buffers
+    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_is_valid(buf) and vim.api.nvim_buf_is_loaded(buf) then
+        local filetype = vim.api.nvim_buf_get_option(buf, 'filetype')
+        local filename = vim.api.nvim_buf_get_name(buf)
+        
+        if filetype == 'haskell' or filetype == 'tidalcycles' or filename:match('%.tidal$') then
+          target_buffer = buf
+          -- For now, highlight on the current cursor line or line 1
+          local windows = vim.fn.win_findbuf(buf)
+          if #windows > 0 then
+            local cursor = vim.api.nvim_win_get_cursor(windows[1])
+            target_row = cursor[1] - 1  -- Convert to 0-indexed
+          else
+            target_row = 0  -- Default to first line
+          end
+          break
+        end
+      end
+    end
+    
+    -- Fallback to current buffer if no Tidal buffer found
+    if not target_buffer then
+      target_buffer = vim.api.nvim_get_current_buf()
+      local cursor = vim.api.nvim_win_get_cursor(0)
+      target_row = cursor[1] - 1
+    end
     
     -- Choose highlight group based on stream ID
-    local hl_index = ((stream_id - 1) % #config.current.highlights.groups) + 1
-    local hl_group = config.current.highlights.groups[hl_index].name
+    local hl_index = ((stream_id - 1) % 8) + 1  -- Support streams 1-8
+    local hl_group = "TidalHighlight" .. hl_index
     
-    -- Queue the precise highlight
+    -- Queue the precise highlight (convert 1-indexed Tidal to 0-indexed Neovim)
     animation.queue_event({
-      event_id = event_id .. "_" .. col_start .. "_" .. col_end,
-      buffer = event_info.buffer,
-      row = event_info.row,
-      start_col = math.max(0, actual_start),
-      end_col = math.min(#event_info.original_text, actual_end),
+      event_id = string.format("tidal_%d_%d_%d_%d", stream_id, target_row, start_col, end_col),
+      buffer = target_buffer,
+      row = target_row,
+      start_col = math.max(0, start_col - 1),  -- Convert to 0-indexed, ensure >= 0
+      end_col = math.max(start_col, end_col - 1),  -- Ensure end >= start
       hl_group = hl_group,
       duration = duration
     })
+    
+    if config.current.debug then
+      vim.notify(string.format("[HighTideLight] Applied position highlight: row=%d, cols=%d..%d", 
+                target_row, start_col - 1, end_col - 1), vim.log.levels.INFO, {timeout = 2000})
+    end
+    
   else
     if config.current.debug then
       vim.notify("[HighTideLight] Invalid OSC args count: " .. #args, vim.log.levels.WARN, {timeout = 2000})
@@ -199,8 +241,53 @@ function M.setup(opts)
   end, {})
   
   vim.api.nvim_create_user_command('TidalHighlightClear', function()
-    highlights.clear_all()
+    processor.clear_all_highlights()
   end, {})
+  
+  -- New command to clear highlights for current line only
+  vim.api.nvim_create_user_command('TidalHighlightClearLine', function()
+    local buffer = vim.api.nvim_get_current_buf()
+    local cursor = vim.api.nvim_win_get_cursor(0)
+    processor.clear_line_highlights(buffer, cursor[1])
+    vim.notify("Cleared highlights for current line", vim.log.levels.INFO)
+  end, {})
+  
+  -- Command to start the Rust OSC bridge
+  vim.api.nvim_create_user_command('TidalHighlightStartBridge', function()
+    local bridge_path = vim.fn.fnamemodify(debug.getinfo(1).source:sub(2), ":h:h:h") .. "/tidal-osc-bridge/target/release/tidal-osc-bridge"
+    
+    if vim.fn.executable(bridge_path) == 0 then
+      vim.notify("Rust bridge not found at: " .. bridge_path .. "\nPlease run: cd tidal-osc-bridge && cargo build --release", vim.log.levels.ERROR)
+      return
+    end
+    
+    -- Start the bridge in background
+    local cmd = string.format("%s --port 6013 --neovim-port %d", bridge_path, cfg.osc.port)
+    if cfg.debug then
+      cmd = cmd .. " --debug"
+    end
+    
+    vim.fn.jobstart(cmd, {
+      on_stdout = function(_, data)
+        if cfg.debug then
+          for _, line in ipairs(data) do
+            if line ~= "" then
+              vim.notify("[Bridge] " .. line, vim.log.levels.INFO, {timeout = 3000})
+            end
+          end
+        end
+      end,
+      on_stderr = function(_, data)
+        for _, line in ipairs(data) do
+          if line ~= "" then
+            vim.notify("[Bridge Error] " .. line, vim.log.levels.ERROR)
+          end
+        end
+      end,
+    })
+    
+    vim.notify("Started Tidal OSC bridge on port 6013 → " .. cfg.osc.port, vim.log.levels.INFO)
+  end, {desc = "Start the Rust OSC bridge for Tidal highlights"})
   
   vim.api.nvim_create_user_command('TidalHighlightTest', function()
     -- Test highlight on current line
@@ -219,10 +306,20 @@ function M.setup(opts)
   end, {})
 
   vim.api.nvim_create_user_command('TidalHighlightOSCTest', function()
-    -- Test OSC communication by sending a test message to ourselves
-    local test_args = {999, "test", 500, 1}
-    handle_osc_highlight(test_args, "/editor/highlights")
-    print("HighTideLight: OSC test message processed")
+    -- Test both OSC message formats
+    vim.notify("Testing OSC communication...", vim.log.levels.INFO)
+    
+    -- Test new Tidal format: [stream_id, duration, cycle, start_col, event_id, end_col]
+    local test_args_new = {1, 0.5, 1.0, 5, 999, 15}  -- Stream 1, 500ms, cols 5-15
+    handle_osc_highlight(test_args_new, "/editor/highlight")
+    
+    -- Test legacy format for backward compatibility
+    vim.defer_fn(function()
+      local test_args_legacy = {999, "test", 0.5, 1}
+      handle_osc_highlight(test_args_legacy, "/editor/highlight")
+    end, 1000)
+    
+    vim.notify("OSC test messages sent (new format + legacy format)", vim.log.levels.INFO)
   end, {})
   
   vim.api.nvim_create_user_command('TidalHighlightStatus', function()
@@ -260,11 +357,38 @@ function M.setup(opts)
 
   -- Simulate OSC message for testing
   vim.api.nvim_create_user_command('TidalHighlightSimulate', function()
-    -- Simulate Pulsar format: [id, duration, cycle, colStart, eventId, colEnd]
-    local test_args = {1, 0.5, 1.0, 0, 1, 10}  -- Stream 1, 500ms duration, positions 0-10 in event 1
-    handle_osc_highlight(test_args, "/editor/highlight")
-    vim.notify("Simulated OSC highlight event", vim.log.levels.INFO, {timeout = 2000})
-  end, {desc = "Simulate OSC highlight message for testing"})
+    -- Simulate new Tidal format with stream-specific highlights
+    local buffer = vim.api.nvim_get_current_buf()
+    local cursor = vim.api.nvim_win_get_cursor(0)
+    local line_content = vim.api.nvim_buf_get_lines(buffer, cursor[1] - 1, cursor[1], false)[1] or ""
+    
+    if line_content == "" then
+      vim.notify("No content on current line to highlight", vim.log.levels.WARN)
+      return
+    end
+    
+    -- Clear existing highlights on this line
+    processor.clear_line_highlights(buffer, cursor[1])
+    
+    -- Create multiple highlights for different streams to show the effect
+    local streams = {1, 2, 3, 4}
+    local line_length = #line_content
+    local segment_size = math.max(1, math.floor(line_length / #streams))
+    
+    for i, stream_id in ipairs(streams) do
+      local start_col = (i - 1) * segment_size + 1
+      local end_col = math.min(i * segment_size, line_length)
+      
+      -- Simulate OSC message: [stream_id, duration, cycle, start_col, event_id, end_col]
+      local test_args = {stream_id, 1.0, 1.0, start_col, 1000 + i, end_col}
+      
+      vim.defer_fn(function()
+        handle_osc_highlight(test_args, "/editor/highlight")
+      end, (i - 1) * 200)  -- Stagger the highlights
+    end
+    
+    vim.notify("Simulated multi-stream OSC highlight events on current line", vim.log.levels.INFO)
+  end, {desc = "Simulate multi-stream OSC highlight messages for testing"})
   
   vim.api.nvim_create_user_command('TidalHighlightLine', function()
     -- Highlight ALL components in the current line (like Strudel)

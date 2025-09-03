@@ -1,0 +1,27 @@
+-- Test file for Tidal event highlighting
+-- Use this to test the highlight functionality
+
+d1 $ sound "bd sn hh cp"
+
+d2 $ sound "arpy*4" # speed 2
+
+d3 $ slow 2 $ sound "bd [sn cp] hh"
+
+d4 $ sometimes rev $ sound "drum*8"
+
+-- Test hush command
+hush
+
+-- Test multi-line pattern
+d1 $ stack [
+  sound "bd*4",
+  sound "sn*2" # pan 0.5,
+  sound "hh*8" # gain 0.7
+]
+
+-- Test function chaining
+d2 $ jux rev $ slow 2 $ sound "arpy" # speed (range 0.5 2 $ sine)
+
+-- Empty line for testing
+
+d3 $ silence

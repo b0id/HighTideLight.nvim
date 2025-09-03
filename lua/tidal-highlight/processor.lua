@@ -192,6 +192,36 @@ function M.get_event_info(event_id)
   return M.event_ids[event_id]
 end
 
+-- Clear highlights for a specific line before re-evaluation
+function M.clear_line_highlights(buffer, line_num)
+  local highlights = require('tidal-highlight.highlights')
+  highlights.clear_line(buffer, line_num - 1)  -- Convert to 0-indexed
+end
+
+-- Clear all highlights (for hush commands)
+function M.clear_all_highlights()
+  local highlights = require('tidal-highlight.highlights')
+  highlights.clear_all()
+end
+
+-- Detect if line contains hush/silence commands
+function M.is_hush_command(text)
+  local hush_patterns = {
+    "hush",
+    "silence",
+    "stop",
+    "^%s*$",  -- Empty line
+  }
+  
+  for _, pattern in ipairs(hush_patterns) do
+    if text:match(pattern) then
+      return true
+    end
+  end
+  
+  return false
+end
+
 -- Clean up old event IDs (garbage collection)
 function M.cleanup_old_events(keep_recent_n)
   keep_recent_n = keep_recent_n or 100
