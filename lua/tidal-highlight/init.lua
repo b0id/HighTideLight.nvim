@@ -30,13 +30,33 @@ local function wrap_tidal_send()
     -- Process the code
     local processed, event_id = processor.process_line(buffer, line_num, code)
     
-    -- Send registration to SuperCollider if we have processed code
+    -- Send position data directly to Rust bridge if we have processed code
     if processed ~= code then
-      -- Notify SuperCollider about this pattern
-      osc.send("/tidal/register", 
-               {event_id, code, "d1"}, 
-               config.current.supercollider.ip, 
-               config.current.supercollider.port)
+      local event_info = processor.get_event_info(event_id)
+      if event_info and #event_info.markers > 0 then
+        -- Send position data for each detected component to Rust bridge
+        for _, marker in ipairs(event_info.markers) do
+          if marker.type == "sound" then
+            -- Extract stream from line (d1, d2, etc.)
+            local stream_id = 1 -- Default to d1
+            local stream_match = code:match("^d(%d+)")
+            if stream_match then
+              stream_id = tonumber(stream_match)
+            end
+            
+            -- Send to Rust bridge in expected format: 
+            -- [stream_id, start_row, start_col, end_row, end_col, duration]
+            osc.send("/editor/highlights",
+                     {stream_id, line_num, marker.start_col, line_num, marker.end_col, 0.5},
+                     "127.0.0.1", 6013)
+                     
+            if config.current.debug then
+              vim.notify(string.format("[HighTideLight] Sent to bridge: stream=%d, row=%d, cols=%d..%d", 
+                        stream_id, line_num, marker.start_col, marker.end_col), vim.log.levels.INFO, {timeout = 2000})
+            end
+          end
+        end
+      end
     end
   end)
   

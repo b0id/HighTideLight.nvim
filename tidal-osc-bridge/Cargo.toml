@@ -10,6 +10,7 @@ name = "tidal-osc-bridge"
 path = "src/main.rs"
 
 [dependencies]
+tokio = { version = "1.0", features = ["full"] }
 rosc = "0.10"
 clap = { version = "4.0", features = ["derive"] }
 env_logger = "0.10"

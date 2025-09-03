@@ -9,9 +9,9 @@ let editorTarget = Target { oName = "Neovim HighTideLight", oAddress = "127.0.0.
 
 let editorShape = OSCContext "/editor/highlights"
 
--- deltaContext function for editor communication (from research)
--- This will be automatically replaced by pattern munging in the companion plugin
-let deltaContext offset eventId pattern = pattern
+-- deltaContext stub - position data sent by Neovim plugin, not TidalCycles
+-- This function exists for compatibility but is not used for highlighting
+let deltaContext pattern = pattern
 
 tidal <- startStream (defaultConfig {cFrameTimespan = 1/50}) [(superdirtTarget {oLatency = 0.2, oAddress = "127.0.0.1", oPort = 57120}, [superdirtShape]), (editorTarget, [editorShape])]
 
