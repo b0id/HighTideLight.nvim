@@ -14,6 +14,13 @@ s.reboot {
         ~dirt.stop;
         ~dirt = SuperDirt(2, s);
         ~dirt.loadSoundFiles;
+
+        ~dirt.loadSoundFiles("/home/b0id/Music/synth/samples-extra/*");
+        ~dirt.loadSoundFiles("/home/b0id/Music/synth/Horror_SFX/Guns/");
+        ~dirt.loadSoundFiles("/home/b0id/Music/synth/DrumSamples/*");
+        ~dirt.loadSoundFiles("/home/b0id/Music/synth/FLESH_SIMULATORYAMAHAPSS-680/*");
+        ~dirt.loadSoundFiles("/home/b0id/Music/synth/ClassicArcadeSFXComplete/*");
+        ~dirt.loadSoundFiles("/home/b0id/Music/synth/FleshSimulatorSovietDrums/*");
         // Load your sample paths here as needed
         // ~dirt.loadSoundFiles("/path/to/your/samples/*");
 

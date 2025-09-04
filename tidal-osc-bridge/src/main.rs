@@ -43,6 +43,7 @@ struct HighlightEvent {
     end_row: i32,
     end_col: i32,
     duration: f32,
+    sound_name: String,  // Store the sound name for future use
 }
 
 #[tokio::main]
@@ -191,19 +192,29 @@ async fn process_osc_message(
     
     debug!("Processing message: {} with {} args", msg.addr, msg.args.len());
     
-    // Parse arguments from TidalCycles: [stream_id, start_row, start_col, end_row, end_col, duration]
-    if msg.args.len() < 6 {
-        warn!("Insufficient arguments: expected 6, got {}", msg.args.len());
+    // Parse arguments from TidalCycles: [sound_name, cps, cycle, orbit, delta, start_pos, end_pos]
+    if msg.args.len() < 7 {
+        warn!("Insufficient arguments: expected 7, got {}", msg.args.len());
         return Ok(());
     }
     
+    // Extract TidalCycles format
+    let sound_name = extract_string(&msg.args[0])?;
+    let _cps = extract_float(&msg.args[1])?;        // Cycles per second (tempo)
+    let _cycle = extract_float(&msg.args[2])?;      // Pattern position
+    let orbit = extract_int(&msg.args[3])?;         // Stream (d1=0, d2=1, etc.)
+    let delta = extract_float(&msg.args[4])?;       // Duration
+    let start_pos = extract_int(&msg.args[5])?;     // Start position
+    let end_pos = extract_int(&msg.args[6])?;       // End position
+    
     let highlight_event = HighlightEvent {
-        stream_id: extract_int(&msg.args[0])?,
-        start_row: extract_int(&msg.args[1])?,
-        start_col: extract_int(&msg.args[2])?,
-        end_row: extract_int(&msg.args[3])?,
-        end_col: extract_int(&msg.args[4])?,
-        duration: extract_float(&msg.args[5])?,
+        stream_id: orbit + 1,  // Convert orbit 0->d1, orbit 1->d2, etc.
+        start_row: 0,          // Default to row 0 for now
+        start_col: start_pos,
+        end_row: 0,            // Default to same row
+        end_col: end_pos,
+        duration: delta,
+        sound_name,
     };
     
     debug!("Parsed highlight event: {:?}", highlight_event);
@@ -226,7 +237,7 @@ async fn forward_to_neovim(
     let cycle = 1.0; // Default cycle value
     
     let osc_msg = OscMessage {
-        addr: "/editor/highlight".to_string(),
+        addr: "/editor/highlights".to_string(),
         args: vec![
             OscType::Int(event.stream_id),
             OscType::Float(event.duration),
@@ -266,5 +277,12 @@ fn extract_float(arg: &OscType) -> Result<f32, Box<dyn std::error::Error>> {
         OscType::Int(i) => Ok(*i as f32),
         OscType::Long(l) => Ok(*l as f32),
         _ => Err(format!("Cannot convert {:?} to float", arg).into()),
+    }
+}
+
+fn extract_string(arg: &OscType) -> Result<String, Box<dyn std::error::Error>> {
+    match arg {
+        OscType::String(s) => Ok(s.clone()),
+        _ => Err(format!("Cannot convert {:?} to string", arg).into()),
     }
 }

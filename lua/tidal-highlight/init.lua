@@ -235,7 +235,7 @@ function M.setup(opts)
   osc.start(cfg)
   
   -- Register OSC handler
-  osc.on("/editor/highlight", handle_osc_highlight)
+  osc.on("/editor/highlights", handle_osc_highlight)
   
   -- Start animation loop
   animation.start(cfg)
@@ -331,12 +331,12 @@ function M.setup(opts)
     
     -- Test new Tidal format: [stream_id, duration, cycle, start_col, event_id, end_col]
     local test_args_new = {1, 0.5, 1.0, 5, 999, 15}  -- Stream 1, 500ms, cols 5-15
-    handle_osc_highlight(test_args_new, "/editor/highlight")
+    handle_osc_highlight(test_args_new, "/editor/highlights")
     
     -- Test legacy format for backward compatibility
     vim.defer_fn(function()
       local test_args_legacy = {999, "test", 0.5, 1}
-      handle_osc_highlight(test_args_legacy, "/editor/highlight")
+      handle_osc_highlight(test_args_legacy, "/editor/highlights")
     end, 1000)
     
     vim.notify("OSC test messages sent (new format + legacy format)", vim.log.levels.INFO)
@@ -403,7 +403,7 @@ function M.setup(opts)
       local test_args = {stream_id, 1.0, 1.0, start_col, 1000 + i, end_col}
       
       vim.defer_fn(function()
-        handle_osc_highlight(test_args, "/editor/highlight")
+        handle_osc_highlight(test_args, "/editor/highlights")
       end, (i - 1) * 200)  -- Stagger the highlights
     end
     

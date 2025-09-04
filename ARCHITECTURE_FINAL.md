@@ -91,3 +91,63 @@ The **Rust bridge is essential** because:
 You were correct - I misunderstood the simulation command as bypassing the bridge, when it actually **proves** the bridge-to-Neovim path works correctly.
 
 **Status: Architecture corrected and aligned with your original vision!** 🎉
+
+---
+
+## 🔍 CRITICAL DISCOVERIES - January 4, 2025
+
+### **Real TidalCycles OSC Message Format Discovered**
+
+Through `tcpdump` analysis of actual TidalCycles output, we discovered the **true OSC message format**:
+
+```
+Source: localhost.6010 → localhost.6013  
+Address: /editor/highlights
+Format: ,sffiiii (7 arguments)
+- String: Sound name ("bd", "sn", etc.)
+- Float: CPS (cycles per second / tempo)  
+- Float: Cycle position (when in pattern this occurs)
+- Int: Orbit (stream ID - d1=0, d2=1, etc.)
+- Int: Delta timing data
+- Int: Start position 
+- Int: End position
+```
+
+### **SuperDirt Context Integration**
+
+Understanding SuperDirt's OSC messages to `/dirt/play` reveals the timing model:
+- **`cps`**: Tempo/cycles per second → Perfect for sync timing
+- **`cycle`**: Pattern position → Exact playback moment  
+- **`delta`**: Event duration → Highlight duration
+- **`orbit`**: Stream mapping → Color assignment (d1=red, d2=cyan)
+- **`s`**: Sound name → What to highlight
+
+### **Architecture Validation**
+
+**✅ Our bridge-based architecture is CORRECT**:
+- TidalCycles sends **dual targets**: SuperDirt (audio) + Bridge (visual)
+- Bridge acts as **desktop web worker equivalent** for OSC processing
+- **Format translation needed**: Bridge must parse TidalCycles' 7-arg format
+- **All infrastructure works** - just needs format alignment
+
+### **Bridge Format Mismatch Resolution**
+
+**Current State:**
+- **Bridge expects**: `[stream_id, start_row, start_col, end_row, end_col, duration]` (6 ints/floats)
+- **TidalCycles sends**: `[sound_name, cps, cycle, orbit, delta, start_pos, end_pos]` (7 mixed types)
+
+**Solution Path:**
+1. **Modify Rust bridge** to accept TidalCycles' actual format
+2. **Extract meaningful data**: orbit→stream_id, positions→cols, delta→duration  
+3. **Map to editor positions** using existing Neovim processor data
+
+### **Key Insight: Perfect Timing Available**
+
+TidalCycles provides **exact timing data** in its messages:
+- **When** each sound plays (cycle position)
+- **How long** it lasts (delta)
+- **Which stream** it belongs to (orbit)
+
+This enables **sample-accurate highlight synchronization** with audio playback - exactly what's needed for professional live coding visualization.
+
+**Status: Ready for format alignment implementation** 🎯

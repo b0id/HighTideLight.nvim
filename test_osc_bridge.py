@@ -60,56 +60,61 @@ def test_bridge():
     print("And Neovim is open with the HighTideLight plugin loaded")
     print()
     
-    # Test different highlight scenarios
+    # Test different highlight scenarios using TidalCycles format
+    # Format: [sound_name, cps, cycle, orbit, delta, start_pos, end_pos]
     test_cases = [
         {
-            'name': 'Stream d1 highlight',
-            'stream_id': 1,
-            'start_row': 1,
-            'start_col': 5,
-            'end_row': 1,
-            'end_col': 15,
-            'duration': 0.5
+            'name': 'Stream d1 (orbit 0) - bd sound',
+            'sound_name': 'bd',
+            'cps': 0.5625,
+            'cycle': 1.0,
+            'orbit': 0,  # d1
+            'delta': 0.5,
+            'start_pos': 5,
+            'end_pos': 15
         },
         {
-            'name': 'Stream d2 highlight',
-            'stream_id': 2,
-            'start_row': 2,
-            'start_col': 10,
-            'end_row': 2,
-            'end_col': 20,
-            'duration': 0.8
+            'name': 'Stream d2 (orbit 1) - sn sound',
+            'sound_name': 'sn',
+            'cps': 0.5625,
+            'cycle': 2.0,
+            'orbit': 1,  # d2
+            'delta': 0.8,
+            'start_pos': 10,
+            'end_pos': 20
         },
         {
-            'name': 'Stream d3 multi-highlight',
-            'stream_id': 3,
-            'start_row': 3,
-            'start_col': 0,
-            'end_row': 3,
-            'end_col': 30,
-            'duration': 1.0
+            'name': 'Stream d3 (orbit 2) - hh sound',
+            'sound_name': 'hh',
+            'cps': 0.5625,
+            'cycle': 3.0,
+            'orbit': 2,  # d3
+            'delta': 1.0,
+            'start_pos': 0,
+            'end_pos': 30
         }
     ]
     
     for i, test in enumerate(test_cases, 1):
         print(f"Test {i}: {test['name']}")
         
-        # Create OSC message in expected format:
-        # [stream_id, start_row, start_col, end_row, end_col, duration]
+        # Create OSC message in TidalCycles format:
+        # [sound_name, cps, cycle, orbit, delta, start_pos, end_pos]
         args = [
-            test['stream_id'],
-            test['start_row'],
-            test['start_col'], 
-            test['end_row'],
-            test['end_col'],
-            test['duration']
+            str(test['sound_name']),
+            float(test['cps']),
+            float(test['cycle']),
+            int(test['orbit']),
+            float(test['delta']),
+            int(test['start_pos']),
+            int(test['end_pos'])
         ]
         
         message = create_osc_message('/editor/highlights', args)
         
         try:
             sock.sendto(message, bridge_addr)
-            print(f"  ✓ Sent: stream={test['stream_id']}, pos=({test['start_row']},{test['start_col']})-({test['end_row']},{test['end_col']}), duration={test['duration']}")
+            print(f"  ✓ Sent: sound={test['sound_name']}, orbit={test['orbit']}, pos={test['start_pos']}..{test['end_pos']}, delta={test['delta']}")
         except Exception as e:
             print(f"  ✗ Error: {e}")
         
@@ -118,15 +123,17 @@ def test_bridge():
     print()
     print("High-frequency test (simulating dense patterns)...")
     
-    # Test high-frequency events to verify batching
+    # Test high-frequency events to verify batching (TidalCycles format)
+    sounds = ['bd', 'sn', 'hh', 'cp']
     for i in range(10):
         args = [
-            random.randint(1, 4),  # Random stream
-            1,  # Same row
-            i * 5,  # Different columns
-            1,
-            i * 5 + 4,
-            0.2  # Short duration
+            str(random.choice(sounds)),         # Random sound name
+            float(0.5625),                      # CPS
+            float(i + 1),                       # Cycle position
+            int(random.randint(0, 3)),          # Random orbit (d1-d4)
+            float(0.2),                         # Delta (short duration)
+            int(i * 5),                         # Start position
+            int(i * 5 + 4)                      # End position
         ]
         
         message = create_osc_message('/editor/highlights', args)
