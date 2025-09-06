@@ -10,6 +10,8 @@ local source_map_generator = require('tidal-highlight.source_map')
 local cache = require('tidal-highlight.cache')
 local highlight_handler = require('tidal-highlight.highlight_handler')
 local integration = require('tidal-highlight.integration')
+local state_service = require('tidal-highlight.state_service')
+local telemetry_monitor = require('tidal-highlight.telemetry_monitor')
 
 local M = {}
 M.enabled = false
@@ -165,6 +167,12 @@ function M.setup(opts)
   highlight_handler.setup(osc)
   integration.setup(osc)
   
+  -- Start the persistent state synchronization service
+  state_service.start()
+  
+  -- Start telemetry monitoring
+  telemetry_monitor.start()
+  
   -- CORRECTED: Your SuperCollider script sends to /editor/highlights (plural)
   osc.on("/editor/highlights", handle_osc_highlight)
   animation.start(cfg)
@@ -176,11 +184,15 @@ function M.setup(opts)
     if M.enabled then
       osc.start(cfg)
       animation.start(cfg)
+      state_service.start()
+      telemetry_monitor.start()
       print("Tidal highlighting enabled")
     else
       highlights.clear_all()
       osc.stop()
       animation.stop()
+      state_service.stop()
+      telemetry_monitor.stop()
       print("Tidal highlighting disabled")
     end
   end, {})
@@ -289,10 +301,103 @@ function M.setup(opts)
   vim.api.nvim_create_user_command('TidalShowStats', function()
     local highlight_stats = highlight_handler.get_stats()
     local integration_stats = integration.get_stats()
-    vim.notify("Highlights: " .. highlight_stats.active_highlights .. 
-               " | Monitored buffers: " .. integration_stats.monitored_buffers ..
-               " | Total tokens: " .. integration_stats.total_tokens, vim.log.levels.INFO)
-  end, {desc = "Show HighTideLight statistics"})
+    local service_stats = state_service.get_stats()
+    local orbits_str = table.concat(integration_stats.active_orbits, ",")
+    
+    vim.notify(string.format(
+      "HighTideLight Stats:\n" ..
+      "  Active highlights: %d\n" ..
+      "  Monitored buffers: %d\n" ..
+      "  Total tokens: %d\n" ..
+      "  Active orbits: [%s]\n" ..
+      "  State service: %s\n" ..
+      "  Registered patterns: %d\n" ..
+      "  Sync failures: %d", 
+      highlight_stats.active_highlights, 
+      integration_stats.monitored_buffers,
+      integration_stats.total_tokens,
+      orbits_str,
+      service_stats.active and "ACTIVE" or "INACTIVE",
+      service_stats.registered_patterns_count,
+      service_stats.sync_failures
+    ), vim.log.levels.INFO)
+  end, {desc = "Show comprehensive HighTideLight system statistics"})
+  
+  vim.api.nvim_create_user_command('TidalTestOrbitDetection', function()
+    local bufnr = vim.api.nvim_get_current_buf()
+    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    for i, line in ipairs(lines) do
+      local orbit_match = line:match("d(%d+)")
+      if orbit_match then
+        local orbit = tonumber(orbit_match) - 1
+        local has_pattern = line:match('s%s*"') or line:match('sound%s*"') or line:match('n%s*"')
+        vim.notify(string.format("Line %d: d%s → orbit=%d, has_pattern=%s", 
+          i, orbit_match, orbit, tostring(has_pattern ~= nil)), vim.log.levels.INFO)
+      end
+    end
+  end, {desc = "Test orbit detection on current buffer"})
+  
+  vim.api.nvim_create_user_command('TidalForceSync', function()
+    if state_service.force_sync() then
+      vim.notify("HighTideLight: Forced state synchronization completed", vim.log.levels.INFO)
+    else
+      vim.notify("HighTideLight: State service not active", vim.log.levels.WARN)
+    end
+  end, {desc = "Force immediate state synchronization with SuperCollider"})
+  
+  vim.api.nvim_create_user_command('TidalRestartService', function()
+    state_service.restart()
+    vim.notify("HighTideLight: State service restarted", vim.log.levels.INFO)
+  end, {desc = "Restart the state synchronization service"})
+  
+  vim.api.nvim_create_user_command('TidalHealthReport', function()
+    local health = telemetry_monitor.get_health_report()
+    local status_icon = health.status == "HEALTHY" and "✅" or 
+                       health.status == "DEGRADED" and "⚠️" or "❌"
+    
+    vim.notify(string.format(
+      "%s HighTideLight Health Report:\n" ..
+      "  Status: %s\n" ..
+      "  Recent messages: %d (errors: %d, %.1f%%)\n" ..
+      "  Total messages: %d\n" ..
+      "  OSC processing avg: %.2fms",
+      status_icon,
+      health.status,
+      health.message_stats.recent_messages,
+      health.message_stats.recent_errors,
+      health.message_stats.error_rate_percent,
+      health.message_stats.total_messages,
+      health.performance.osc_processing and health.performance.osc_processing.avg_time or 0
+    ), health.status == "HEALTHY" and vim.log.levels.INFO or vim.log.levels.WARN)
+  end, {desc = "Show detailed telemetry health report"})
+  
+  vim.api.nvim_create_user_command('TidalShowRecentMessages', function()
+    local messages = telemetry_monitor.get_recent_messages(5)
+    if #messages == 0 then
+      vim.notify("HighTideLight: No recent messages", vim.log.levels.INFO)
+      return
+    end
+    
+    local msg_strings = {}
+    for i, msg in ipairs(messages) do
+      local status = msg.validation.valid and "✅" or "❌"
+      local args_str = table.concat(msg.args, ", ")
+      table.insert(msg_strings, string.format("%d. %s %s: [%s]", 
+        i, status, msg.address, args_str))
+    end
+    
+    vim.notify("Recent OSC Messages:\n" .. table.concat(msg_strings, "\n"), vim.log.levels.INFO)
+  end, {desc = "Show recent OSC messages with validation status"})
+  
+  vim.api.nvim_create_user_command('TidalDebugIntegration', function()
+    vim.g.tidal_highlight_debug = true
+    vim.notify("HighTideLight: Debug mode enabled - check integration logs", vim.log.levels.INFO)
+  end, {desc = "Enable debug mode for integration troubleshooting"})
+  
+  vim.api.nvim_create_user_command('TidalQuietDebug', function()
+    vim.g.tidal_highlight_debug = false
+    vim.notify("HighTideLight: Debug mode disabled", vim.log.levels.INFO)
+  end, {desc = "Disable debug mode"})
 end
 
 return M

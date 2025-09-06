@@ -94,6 +94,7 @@ AppClock.sched(5.0, {  // Increased delay from 2 to 5 seconds
         ~dirt.receiveAction = { |msg|
             var latency, event, eventId, sound, delta, cycle, colStart, colEnd, streamId;
             var patternInfo, soundInfo, matchingEventId, mostRecentTime;
+            var estimatedLine, estimatedColStart, estimatedColEnd;
 
             // DEBUG: Post the message structure if needed
             if(~highlightDebug == true) {
@@ -138,18 +139,42 @@ AppClock.sched(5.0, {  // Increased delay from 2 to 5 seconds
                             ("❌ No position data for sound: " ++ sound).postln;
                         };
                         
-                        // Fallback to 4-argument format
-                        ~neovimOSC.sendMsg("/editor/highlights", eventId, sound, delta, cycle);
-                        ("Fallback 4-arg highlight for: " ++ sound).postln;
+                        // FIXED: Always send 6-argument format with estimated coordinates
+                        estimatedLine = 1;
+                        estimatedColStart = 0; 
+                        estimatedColEnd = sound.asString.size;
+                        
+                        ~neovimOSC.sendMsg("/editor/highlights", 
+                            estimatedLine,      // lineStart
+                            estimatedColStart,  // colStart  
+                            estimatedLine,      // lineEnd
+                            estimatedColEnd,    // colEnd
+                            delta,              // duration
+                            sound               // sound name
+                        );
+                        
+                        ("Fallback 6-arg highlight for: " ++ sound ++ " (estimated coords)").postln;
                     };
                 } {
                     if(~highlightDebug == true) {
                         ("❌ No stored pattern data for orbit: " ++ streamId).postln;
                     };
                     
-                    // Fallback to 4-argument format
-                    ~neovimOSC.sendMsg("/editor/highlights", eventId, sound, delta, cycle);
-                    ("Fallback 4-arg highlight for: " ++ sound).postln;
+                    // FIXED: Always send 6-argument format with estimated coordinates
+                    estimatedLine = 1;
+                    estimatedColStart = 0;
+                    estimatedColEnd = sound.asString.size; 
+                    
+                    ~neovimOSC.sendMsg("/editor/highlights", 
+                        estimatedLine,      // lineStart
+                        estimatedColStart,  // colStart  
+                        estimatedLine,      // lineEnd
+                        estimatedColEnd,    // colEnd
+                        delta,              // duration
+                        sound               // sound name
+                    );
+                    
+                    ("Fallback 6-arg highlight for: " ++ sound ++ " (estimated coords)").postln;
                 };
             } {
                 if(~highlightDebug == true) {

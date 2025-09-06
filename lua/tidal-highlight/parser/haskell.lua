@@ -53,19 +53,23 @@ function M.find_mini_notation_strings(bufnr, range)
   local start_line_0based = range.start_line - 1
   local end_line_0based = range.end_line - 1
 
-  for _, node in query:iter_captures(root, bufnr, start_line_0based, end_line_0based) do
+  for _, node in query:iter_captures(root, bufnr) do
     local s_line, s_col, e_line, e_col = node:range()
-    local content = vim.treesitter.get_node_text(node, bufnr)
+    
+    -- Filter to only include nodes within the requested range
+    if s_line >= start_line_0based and s_line <= end_line_0based then
+      local content = vim.treesitter.get_node_text(node, bufnr)
 
-    content = content:sub(2, -2)
+      content = content:sub(2, -2)
 
-    table.insert(results, {
-      content = content,
-      range = {
-        start = { line = s_line + 1, col = s_col },
-        ["end"] = { line = e_line + 1, col = e_col },
-      },
-    })
+      table.insert(results, {
+        content = content,
+        range = {
+          start = { line = s_line + 1, col = s_col },
+          ["end"] = { line = e_line + 1, col = e_col },
+        },
+      })
+    end
   end
 
   return results

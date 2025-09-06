@@ -43,50 +43,94 @@ local function find_sound_position(sound_name, source_maps)
   return nil
 end
 
---- Creates an extmark-based highlight with automatic cleanup
+--- Creates an extmark-based highlight with automatic cleanup (THREAD-SAFE)
 local function create_timed_highlight(bufnr, line, col_start, col_end, duration_seconds, unique_id)
-  local coords = to_extmark_coords(line, col_start, col_end)
-  
-  -- Create the extmark
-  local mark_id = vim.api.nvim_buf_set_extmark(bufnr, NAMESPACE_ID, coords.line, coords.col_start, {
-    end_col = coords.col_end,
-    hl_group = HIGHLIGHT_GROUP,
-    priority = 1000,
-    strict = false  -- Don't error if position is invalid
-  })
-  
-  local highlight_id = next_highlight_id
-  next_highlight_id = next_highlight_id + 1
-  
-  -- Store highlight info for tracking
-  active_highlights[highlight_id] = {
-    bufnr = bufnr,
-    mark_id = mark_id,
-    unique_id = unique_id,
-    start_time = vim.loop.hrtime(),
-    duration_ns = duration_seconds * 1e9
-  }
-  
-  -- Schedule automatic cleanup
-  vim.defer_fn(function()
-    M.cleanup_highlight(highlight_id)
-  end, math.max(100, duration_seconds * 1000))  -- Minimum 100ms
-  
-  return highlight_id
+  -- CRITICAL: Schedule all buffer/UI operations on main thread
+  return vim.schedule(function()
+    -- Validate buffer is still valid
+    if not vim.api.nvim_buf_is_valid(bufnr) then
+      if vim.g.tidal_highlight_debug then
+        vim.notify("HighTideLight: Buffer " .. bufnr .. " no longer valid", vim.log.levels.WARN)
+      end
+      return
+    end
+    
+    local coords = to_extmark_coords(line, col_start, col_end)
+    
+    -- Validate coordinates are reasonable
+    local line_count = vim.api.nvim_buf_line_count(bufnr)
+    if coords.line >= line_count or coords.line < 0 then
+      if vim.g.tidal_highlight_debug then
+        vim.notify(string.format("HighTideLight: Invalid line %d (buffer has %d lines)", 
+          coords.line, line_count), vim.log.levels.WARN)
+      end
+      return
+    end
+    
+    -- Create the extmark safely
+    local success, mark_id = pcall(vim.api.nvim_buf_set_extmark, bufnr, NAMESPACE_ID, coords.line, coords.col_start, {
+      end_col = math.min(coords.col_end, coords.col_start + 50),  -- Limit highlight width
+      hl_group = HIGHLIGHT_GROUP,
+      priority = 1000,
+      strict = false  -- Don't error if position is invalid
+    })
+    
+    if not success then
+      if vim.g.tidal_highlight_debug then
+        vim.notify("HighTideLight: Failed to create extmark: " .. tostring(mark_id), vim.log.levels.WARN)
+      end
+      return
+    end
+    
+    local highlight_id = next_highlight_id
+    next_highlight_id = next_highlight_id + 1
+    
+    -- Store highlight info for tracking
+    active_highlights[highlight_id] = {
+      bufnr = bufnr,
+      mark_id = mark_id,
+      unique_id = unique_id,
+      start_time = vim.loop.hrtime(),
+      duration_ns = duration_seconds * 1e9
+    }
+    
+    -- Schedule automatic cleanup using delta timing
+    vim.defer_fn(function()
+      M.cleanup_highlight(highlight_id)
+    end, math.max(100, math.floor(duration_seconds * 1000)))  -- Minimum 100ms, use delta from OSC
+    
+    if vim.g.tidal_highlight_debug then
+      vim.notify(string.format("HighTideLight: Created highlight %d for '%s' at line=%d cols=%d-%d duration=%.2fs", 
+        highlight_id, unique_id, line, col_start, col_end, duration_seconds), vim.log.levels.INFO)
+    end
+    
+    return highlight_id
+  end)
 end
 
---- Cleanup a specific highlight
+--- Cleanup a specific highlight (THREAD-SAFE)
 function M.cleanup_highlight(highlight_id)
   local highlight = active_highlights[highlight_id]
   if highlight then
-    pcall(vim.api.nvim_buf_del_extmark, highlight.bufnr, NAMESPACE_ID, highlight.mark_id)
+    -- Schedule cleanup on main thread
+    vim.schedule(function()
+      pcall(vim.api.nvim_buf_del_extmark, highlight.bufnr, NAMESPACE_ID, highlight.mark_id)
+      if vim.g.tidal_highlight_debug then
+        vim.notify("HighTideLight: Cleaned up highlight " .. highlight_id, vim.log.levels.INFO)
+      end
+    end)
     active_highlights[highlight_id] = nil
   end
 end
 
---- Cleanup all active highlights
+--- Cleanup all active highlights (THREAD-SAFE)
 function M.cleanup_all_highlights()
+  local highlights_to_clean = {}
   for highlight_id, _ in pairs(active_highlights) do
+    table.insert(highlights_to_clean, highlight_id)
+  end
+  
+  for _, highlight_id in ipairs(highlights_to_clean) do
     M.cleanup_highlight(highlight_id)
   end
 end
@@ -95,10 +139,16 @@ end
 -- Implements your 6-argument specification:
 -- lineStart (Integer), colStart (Integer), lineEnd (Integer), colEnd (Integer), delta (Float), s (String)
 function M.handle_highlight_message(args, address)
+  local processing_start = vim.loop.hrtime()
   ensure_highlight_group()
   
-  if #args < 6 then
-    vim.notify("HighTideLight: Invalid highlight message - expected 6 args, got " .. #args, vim.log.levels.WARN)
+  -- Validate message with telemetry monitor
+  local telemetry_monitor = require('tidal-highlight.telemetry_monitor')
+  local validation = telemetry_monitor.monitor_osc_message(address, args, processing_start)
+  
+  if not validation.valid then
+    vim.notify(string.format("HighTideLight: Message validation failed - %s", 
+      validation.error), vim.log.levels.ERROR)
     return
   end
   

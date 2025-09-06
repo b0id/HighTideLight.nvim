@@ -13,26 +13,84 @@ M.active_source_maps = {}
 -- Track which buffers we're monitoring
 local monitored_buffers = {}
 
---- Generates and caches source maps for a buffer
+--- Extract orbit number from Haskell line (d1 → 0, d2 → 1, etc.)
+local function extract_orbit_from_line(line_content)
+  -- Match patterns like "d1 $", "d2$", etc. ($ doesn't need escaping in this context)
+  local d_match = line_content:match("d(%d+)")
+  if d_match then
+    return tonumber(d_match) - 1  -- d1→0, d2→1, d3→2, etc.
+  end
+  return 0  -- Default to orbit 0 if no match
+end
+
+--- Check if line contains Tidal pattern syntax
+local function is_tidal_pattern_line(line_content)
+  -- Must have d1/d2/etc. pattern (simplified regex)
+  if not line_content:match("d%d+") then
+    return false
+  end
+  
+  -- Look for common Tidal functions and patterns
+  local tidal_patterns = {
+    'sound%s*"[^"]*"',      -- sound "bd cp"
+    's%s*"[^"]*"',          -- s "bd cp" 
+    'n%s*"[^"]*"',          -- n "0 1 2"
+    'note%s*"[^"]*"',       -- note "c d e"
+    'midichan%s*"[^"]*"',   -- midichan "1 2"
+    'ccn%s*"[^"]*"',        -- ccn "74 75"
+    'ccv%s*"[^"]*"',        -- ccv "0.5 0.8"
+    -- Handle function chains
+    '%w+%s*"[^"]*"',        -- any_function "pattern"
+    -- Handle bare quoted strings in Tidal context
+    '"[^"]*"',              -- "bd cp hh"
+  }
+  
+  for _, pattern in ipairs(tidal_patterns) do
+    if line_content:match(pattern) then
+      return true
+    end
+  end
+  
+  return false
+end
+
+--- Generates and caches source maps for a buffer with orbit detection
 local function update_source_map(bufnr)
   if not vim.api.nvim_buf_is_valid(bufnr) then
     return
   end
   
   local line_count = vim.api.nvim_buf_line_count(bufnr)
+  local buffer_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   
   -- Clear old mappings for this buffer
   M.active_source_maps[bufnr] = {}
   
   -- Generate source maps for all lines in the buffer
   for line = 1, line_count do
-    local range = { start_line = line, end_line = line }
-    local source_map_data = source_map.generate(bufnr, range)
+    local line_content = buffer_lines[line] or ""
     
-    if next(source_map_data) then  -- Only store non-empty source maps
-      local range_key = line .. "_" .. line
-      M.active_source_maps[bufnr] = M.active_source_maps[bufnr] or {}
-      M.active_source_maps[bufnr][range_key] = source_map_data
+    -- Only process lines that contain Tidal patterns
+    if is_tidal_pattern_line(line_content) then
+      local range = { start_line = line, end_line = line }
+      local source_map_data = source_map.generate(bufnr, range)
+      
+      if next(source_map_data) then  -- Only store non-empty source maps
+        local orbit = extract_orbit_from_line(line_content)
+        local range_key = line .. "_" .. line
+        M.active_source_maps[bufnr] = M.active_source_maps[bufnr] or {}
+        M.active_source_maps[bufnr][range_key] = {
+          source_map = source_map_data,
+          orbit = orbit,
+          line_content = line_content,
+          last_updated = vim.loop.hrtime()
+        }
+        
+        if vim.g.tidal_highlight_debug then
+          vim.notify(string.format("HighTideLight: Line %d orbit=%d tokens=%d", 
+            line, orbit, vim.tbl_count(source_map_data)), vim.log.levels.INFO)
+        end
+      end
     end
   end
   
@@ -50,14 +108,15 @@ end
 --- Find token by sample name across all active source maps
 local function find_token_by_sample(sample_name)
   for bufnr, buf_source_maps in pairs(M.active_source_maps) do
-    for range_key, source_map_data in pairs(buf_source_maps) do
-      for unique_id, token_info in pairs(source_map_data) do
+    for range_key, range_data in pairs(buf_source_maps) do
+      for unique_id, token_info in pairs(range_data.source_map or {}) do
         if token_info.value == sample_name then
           return {
             bufnr = bufnr,
             unique_id = unique_id,
             token_info = token_info,
-            range_key = range_key
+            range_key = range_key,
+            orbit = range_data.orbit  -- Include orbit information
           }
         end
       end
@@ -109,7 +168,7 @@ local function handle_integrated_highlight(args, address)
   return highlight_handler.handle_highlight_message({lineStart, colStart, lineEnd, colEnd, delta, s}, address)
 end
 
---- Send current source map data to SuperCollider
+--- Send current source map data to SuperCollider with correct orbit mapping
 local function send_source_map_to_supercollider(bufnr, osc_client)
   local buf_source_maps = M.active_source_maps[bufnr]
   if not buf_source_maps then
@@ -118,17 +177,25 @@ local function send_source_map_to_supercollider(bufnr, osc_client)
   
   local config = require('tidal-highlight.config')
   
-  for range_key, source_map_data in pairs(buf_source_maps) do
+  for range_key, range_data in pairs(buf_source_maps) do
+    local orbit = range_data.orbit
+    local source_map_data = range_data.source_map
+    
     for unique_id, token_info in pairs(source_map_data) do
       -- Send sound position data: /tidal/sound_position [orbit, sound, startCol, endCol]
-      local orbit = 0  -- TODO: Extract from buffer context or line analysis
-      
       osc_client.send("/tidal/sound_position", {
-        orbit,
+        orbit,  -- Use the dynamically detected orbit
         token_info.value,
         token_info.range.start.col,
         token_info.range["end"].col
       }, config.current.supercollider.ip, config.current.supercollider.port)
+      
+      if vim.g.tidal_highlight_debug then
+        vim.notify(string.format(
+          "HighTideLight: Sent to SuperCollider - orbit=%d sound='%s' cols=%d-%d",
+          orbit, token_info.value, token_info.range.start.col, token_info.range["end"].col
+        ), vim.log.levels.INFO)
+      end
     end
   end
 end
@@ -216,21 +283,30 @@ end
 function M.get_stats()
   local buffer_count = 0
   local total_tokens = 0
+  local orbits_used = {}
   
   for bufnr, buf_source_maps in pairs(M.active_source_maps) do
     if vim.api.nvim_buf_is_valid(bufnr) then
       buffer_count = buffer_count + 1
-      for _, source_map_data in pairs(buf_source_maps) do
-        for _ in pairs(source_map_data) do
+      for _, range_data in pairs(buf_source_maps) do
+        orbits_used[range_data.orbit] = true
+        for _ in pairs(range_data.source_map or {}) do
           total_tokens = total_tokens + 1
         end
       end
     end
   end
   
+  local orbit_list = {}
+  for orbit in pairs(orbits_used) do
+    table.insert(orbit_list, orbit)
+  end
+  table.sort(orbit_list)
+  
   return {
     monitored_buffers = buffer_count,
     total_tokens = total_tokens,
+    active_orbits = orbit_list,
     active_source_maps = M.active_source_maps
   }
 end
