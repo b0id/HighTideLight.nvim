@@ -1,6 +1,5 @@
--- ~/.config/nvim/lua/tidal-highlight/animation.lua
+-- lua/tidal-highlight/animation.lua
 local highlights = require('tidal-highlight.highlights')
-local processor = require('tidal-highlight.processor')
 
 local M = {}
 M.timer = nil
@@ -18,14 +17,9 @@ function M.process_frame()
     highlights.add_highlight(event)
   end
   M.pending_events = {}
-  
+
   -- Update highlight diff
   highlights.update_frame()
-  
-  -- Cleanup old events periodically
-  if math.random() < 0.01 then  -- 1% chance each frame
-    processor.cleanup_old_events()
-  end
 end
 
 -- Start animation loop
@@ -33,9 +27,9 @@ function M.start(config)
   if M.timer then
     M.stop()
   end
-  
+
   local interval = math.floor(1000 / config.animation.fps)
-  
+
   M.timer = vim.loop.new_timer()
   M.timer:start(0, interval, vim.schedule_wrap(function()
     M.process_frame()

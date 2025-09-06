@@ -58,3 +58,12 @@ At work, to continue development:
 git clone https://github.com/b0id/HighTideLight.nvim.git
 cd HighTideLight.nvim
 git checkout dev/osc-fixes
+
+# Return to this exact checkpoint
+git checkout v0.1.0-working-prototype
+
+# Or create a new branch from this point
+git checkout -b feature/new-experiment v0.1.0-working-prototype
+
+# Or reset current branch to this point (destructive)
+git reset --hard v0.1.0-working-prototype
