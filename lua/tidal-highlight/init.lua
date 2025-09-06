@@ -8,6 +8,8 @@ local animation = require('tidal-highlight.animation')
 -- ++ ADD THE NEW PARSING ENGINE MODULES ++
 local source_map_generator = require('tidal-highlight.source_map')
 local cache = require('tidal-highlight.cache')
+local highlight_handler = require('tidal-highlight.highlight_handler')
+local integration = require('tidal-highlight.integration')
 
 local M = {}
 M.enabled = false
@@ -158,6 +160,11 @@ function M.setup(opts)
   if not cfg.enabled then return end
   M.enabled = true
   osc.start(cfg)
+  
+  -- Set up the new integrated highlighting system
+  highlight_handler.setup(osc)
+  integration.setup(osc)
+  
   -- CORRECTED: Your SuperCollider script sends to /editor/highlights (plural)
   osc.on("/editor/highlights", handle_osc_highlight)
   animation.start(cfg)
@@ -265,6 +272,27 @@ function M.setup(opts)
     animation.queue_event({ event_id = "test_" .. vim.loop.now(), buffer = vim.api.nvim_get_current_buf(), row = row, start_col = 0, end_col = 10, hl_group = "HighTideLightSound1", duration = 1000 })
     vim.notify("[HighTideLight] Forced test highlight on current line", vim.log.levels.INFO)
   end, {})
+  
+  -- New commands for testing the OSC integration
+  vim.api.nvim_create_user_command('TidalTestOSCMessage', function()
+    -- Test the 6-argument OSC message format
+    local cursor = vim.api.nvim_win_get_cursor(0)
+    local line = cursor[1]
+    highlight_handler.handle_highlight_message({line, 5, line, 15, 0.5, "bd"}, "/neovim/highlight")
+    vim.notify("HighTideLight: Test OSC highlight message sent", vim.log.levels.INFO)
+  end, {desc = "Test OSC highlight message with precise coordinates"})
+  
+  vim.api.nvim_create_user_command('TidalUpdateSourceMap', function()
+    integration.update_current_buffer()
+  end, {desc = "Manually update source map for current buffer"})
+  
+  vim.api.nvim_create_user_command('TidalShowStats', function()
+    local highlight_stats = highlight_handler.get_stats()
+    local integration_stats = integration.get_stats()
+    vim.notify("Highlights: " .. highlight_stats.active_highlights .. 
+               " | Monitored buffers: " .. integration_stats.monitored_buffers ..
+               " | Total tokens: " .. integration_stats.total_tokens, vim.log.levels.INFO)
+  end, {desc = "Show HighTideLight statistics"})
 end
 
 return M
