@@ -168,7 +168,7 @@ local function handle_integrated_highlight(args, address)
   return highlight_handler.handle_highlight_message({lineStart, colStart, lineEnd, colEnd, delta, s}, address)
 end
 
---- Send current source map data to SuperCollider with correct orbit mapping
+--- Send current source map data to SuperCollider with correct orbit mapping and buffer tracking
 local function send_source_map_to_supercollider(bufnr, osc_client)
   local buf_source_maps = M.active_source_maps[bufnr]
   if not buf_source_maps then
@@ -181,19 +181,30 @@ local function send_source_map_to_supercollider(bufnr, osc_client)
     local orbit = range_data.orbit
     local source_map_data = range_data.source_map
     
+    -- Send buffer mapping info: /tidal/buffer_map [orbit, bufnr, line]
+    local line = tonumber(range_key:match("^(%d+)_"))
+    osc_client.send("/tidal/buffer_map", {
+      orbit,
+      bufnr,
+      line
+    }, config.current.supercollider.ip, config.current.supercollider.port)
+    
     for unique_id, token_info in pairs(source_map_data) do
-      -- Send sound position data: /tidal/sound_position [orbit, sound, startCol, endCol]
+      -- Send sound position data: /tidal/sound_position [orbit, sound, startCol, endCol, bufnr, line]
       osc_client.send("/tidal/sound_position", {
         orbit,  -- Use the dynamically detected orbit
         token_info.value,
         token_info.range.start.col,
-        token_info.range["end"].col
+        token_info.range["end"].col,
+        bufnr,  -- Include buffer for tracking
+        token_info.range.start.line  -- Include line for tracking
       }, config.current.supercollider.ip, config.current.supercollider.port)
       
       if vim.g.tidal_highlight_debug then
         vim.notify(string.format(
-          "HighTideLight: Sent to SuperCollider - orbit=%d sound='%s' cols=%d-%d",
-          orbit, token_info.value, token_info.range.start.col, token_info.range["end"].col
+          "HighTideLight: Sent to SuperCollider - orbit=%d sound='%s' cols=%d-%d buf=%d line=%d",
+          orbit, token_info.value, token_info.range.start.col, token_info.range["end"].col,
+          bufnr, token_info.range.start.line
         ), vim.log.levels.INFO)
       end
     end
@@ -247,7 +258,7 @@ end
 --- Set up the integrated system
 function M.setup(osc_server)
   -- Register our integrated highlight handler
-  osc_server.on("/neovim/highlight", handle_integrated_highlight)
+  osc_server.on("/editor/highlights", handle_integrated_highlight)
   
   -- Monitor Haskell buffers automatically
   vim.api.nvim_create_autocmd("FileType", {

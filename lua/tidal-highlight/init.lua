@@ -129,21 +129,72 @@ end
 
 -- This OSC handler is from your original file and is UNCHANGED.
 local function handle_osc_highlight(args, address)
-  -- The content of this function is exactly as it was in your original file.
-  -- It correctly handles the 4, 5, and 6-argument messages from SuperCollider.
+  -- Log the message for debugging
+  table.insert(M.osc_history, {address = address, args = args, timestamp = vim.loop.now()})
+  if #M.osc_history > 50 then table.remove(M.osc_history, 1) end -- Keep last 50
+  
   if config.current.debug then vim.notify(string.format("[HighTideLight] OSC %s: %s", address, vim.inspect(args)), vim.log.levels.DEBUG, { timeout = 2000 }) end
+  
   if #args == 6 then
-    local stream_id = args[1]
-    local duration = (args[2] * 1000) or 500
+    -- SuperCollider sends: [orbit, delta, cycle, colStart, eventId, colEnd]
+    local orbit = args[1]
+    local delta = args[2] 
+    local cycle = args[3]
     local col_start = args[4]
+    local event_id = args[5]
     local col_end = args[6]
-    if M.pattern_store and M.pattern_store[stream_id] then
-      local stored_pattern = M.pattern_store[stream_id]
-      local hl_index = #config.current.highlights.groups > 0 and (stream_id % #config.current.highlights.groups) + 1 or 1
-      local hl_group = #config.current.highlights.groups > 0 and config.current.highlights.groups[hl_index].name or "TidalSoundActive"
-      animation.queue_event({ event_id = "precision_" .. stream_id .. "_" .. col_start .. "_" .. vim.loop.now(), buffer = stored_pattern.buffer or vim.api.nvim_get_current_buf(), row = stored_pattern.row or 0, start_col = col_start, end_col = col_end, hl_group = hl_group, duration = duration })
-    else
-      if config.current.debug then vim.notify(string.format("[HighTideLight] No pattern store for orbit: %d", stream_id), vim.log.levels.WARN, { timeout = 2000 }) end
+    
+    -- We need to find which sound is at these coordinates
+    local active_source_maps = integration.active_source_maps
+    local found_token = false
+    
+    -- Find the sound token at these coordinates
+    for bufnr, buf_source_maps in pairs(active_source_maps) do
+      for range_key, range_data in pairs(buf_source_maps) do
+        if range_data.orbit == orbit then
+          for unique_id, token_info in pairs(range_data.source_map or {}) do
+            -- Match by coordinate range
+            if token_info.range.start.col == col_start and token_info.range["end"].col == col_end then
+              -- Found the exact token!
+              local duration = (delta * 1000) or 500
+              local hl_index = #config.current.highlights.groups > 0 and (orbit % #config.current.highlights.groups) + 1 or 1
+              local hl_group = #config.current.highlights.groups > 0 and config.current.highlights.groups[hl_index].name or "TidalSoundActive"
+              
+              local event_data = { 
+                event_id = "precision_" .. orbit .. "_" .. col_start .. "_" .. vim.loop.now(), 
+                buffer = bufnr, 
+                row = token_info.range.start.line - 1, -- Convert to 0-based
+                start_col = col_start, 
+                end_col = col_end, 
+                hl_group = hl_group, 
+                duration = duration 
+              }
+              
+              if config.current.debug then
+                vim.notify(string.format("[HighTideLight] QUEUEING EVENT: buf=%d row=%d cols=%d-%d dur=%dms", 
+                  bufnr, event_data.row, col_start, col_end, duration), vim.log.levels.INFO)
+              end
+              
+              animation.queue_event(event_data)
+              found_token = true
+              
+              if config.current.debug then
+                vim.notify(string.format("[HighTideLight] PRECISION HIT! orbit=%d sound='%s' cols=%d-%d", 
+                  orbit, token_info.value, col_start, col_end), vim.log.levels.INFO)
+              end
+              break
+            end
+          end
+          if found_token then break end
+        end
+      end
+      if found_token then break end
+    end
+    
+    if not found_token then
+      if config.current.debug then 
+        vim.notify(string.format("[HighTideLight] No token found at orbit=%d cols=%d-%d", orbit, col_start, col_end), vim.log.levels.WARN, { timeout = 2000 }) 
+      end
     end
   elseif #args == 5 then
     -- Your original 5-arg logic...
@@ -398,6 +449,140 @@ function M.setup(opts)
     vim.g.tidal_highlight_debug = false
     vim.notify("HighTideLight: Debug mode disabled", vim.log.levels.INFO)
   end, {desc = "Disable debug mode"})
+  
+  -- NEW: Data inspection commands for debugging
+  vim.api.nvim_create_user_command('TidalInspectSourceMaps', function()
+    local integration = require('tidal-highlight.integration')
+    print("=== ACTIVE SOURCE MAPS ===")
+    for bufnr, buf_maps in pairs(integration.active_source_maps) do
+      print(string.format("Buffer %d:", bufnr))
+      for range_key, range_data in pairs(buf_maps) do
+        print(string.format("  Range %s (orbit=%d):", range_key, range_data.orbit))
+        for token_id, token_info in pairs(range_data.source_map or {}) do
+          print(string.format("    Token: %s = '%s' at line=%d cols=%d-%d", 
+            token_id, token_info.value, 
+            token_info.range.start.line, token_info.range.start.col, token_info.range["end"].col))
+        end
+      end
+    end
+    print("=== END SOURCE MAPS ===")
+  end, {desc = "Inspect current source map data structures"})
+  
+  vim.api.nvim_create_user_command('TidalInspectOSCFlow', function()
+    print("=== OSC MESSAGE FLOW TEST ===")
+    -- Simulate the OSC message we expect from SuperCollider
+    local test_args = {0, "bd", 0.5}  -- orbit, sound, delta
+    print("Simulating: /editor/highlights with args:", vim.inspect(test_args))
+    
+    -- Test our lookup logic
+    local integration = require('tidal-highlight.integration')
+    local orbit = test_args[1]
+    local sound = test_args[2] 
+    local delta = test_args[3]
+    
+    print("Looking for orbit=" .. orbit .. " sound='" .. sound .. "'")
+    
+    local found = false
+    for bufnr, buf_maps in pairs(integration.active_source_maps) do
+      for range_key, range_data in pairs(buf_maps) do
+        if range_data.orbit == orbit then
+          print("Found matching orbit in buffer " .. bufnr .. " range " .. range_key)
+          for token_id, token_info in pairs(range_data.source_map or {}) do
+            if token_info.value == sound then
+              print("MATCH FOUND! Token:", vim.inspect(token_info))
+              found = true
+            else
+              print("Available token: " .. token_info.value)
+            end
+          end
+        end
+      end
+    end
+    
+    if not found then
+      print("❌ NO MATCH FOUND - This is why highlighting fails")
+    else  
+      print("✅ MATCH FOUND - Highlighting should work")
+    end
+    print("=== END OSC FLOW TEST ===")
+  end, {desc = "Test OSC message flow and token lookup"})
+  
+  vim.api.nvim_create_user_command('TidalTestPatternParsing', function()
+    print("=== PATTERN PARSING TEST ===")
+    local bufnr = vim.api.nvim_get_current_buf()
+    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    
+    for i, line in ipairs(lines) do
+      print(string.format("Line %d: %s", i, line))
+      
+      -- Test orbit detection
+      local orbit_match = line:match("d(%d+)")
+      if orbit_match then
+        local orbit = tonumber(orbit_match) - 1
+        print(string.format("  → Detected orbit: %d", orbit))
+        
+        -- Test if it looks like a pattern
+        local integration = require('tidal-highlight.integration')
+        -- We need to access the private function, so let's replicate the logic
+        local has_sound = line:match('s%s*"[^"]*"') or line:match('sound%s*"[^"]*"')
+        print(string.format("  → Has sound pattern: %s", tostring(has_sound ~= nil)))
+        
+        if has_sound then
+          -- Try to parse this line
+          local source_map = require('tidal-highlight.source_map')
+          local range = { start_line = i, end_line = i }
+          local result = source_map.generate(bufnr, range)
+          print(string.format("  → AST tokens found: %d", vim.tbl_count(result or {})))
+          if result then
+            for token_id, token_info in pairs(result) do
+              print(string.format("    Token: %s = '%s'", token_id, token_info.value))
+            end
+          end
+        end
+      end
+    end
+    print("=== END PATTERN PARSING TEST ===")  
+  end, {desc = "Test pattern parsing on current buffer"})
+  
+  -- OSC Message History
+  M.osc_history = M.osc_history or {}
+  
+  vim.api.nvim_create_user_command('TidalShowOSCHistory', function()
+    print("=== RECENT OSC MESSAGES ===")
+    local count = #M.osc_history
+    print(string.format("Total messages: %d", count))
+    
+    -- Show last 10 messages
+    local start = math.max(1, count - 9)
+    for i = start, count do
+      local msg = M.osc_history[i]
+      print(string.format("[%d] %s: %s", i, msg.address, vim.inspect(msg.args)))
+    end
+    print("=== END OSC HISTORY ===")
+  end, {desc = "Show recent OSC messages received"})
+  
+  vim.api.nvim_create_user_command('TidalClearOSCHistory', function()
+    M.osc_history = {}
+    print("OSC history cleared")
+  end, {desc = "Clear OSC message history"})
+  
+  vim.api.nvim_create_user_command('TidalTestAnimation', function()
+    print("=== TESTING ANIMATION DIRECTLY ===")
+    local animation = require('tidal-highlight.animation')
+    local bufnr = vim.api.nvim_get_current_buf()
+    
+    -- Queue a test event directly
+    animation.queue_event({
+      event_id = "test_" .. vim.loop.now(),
+      buffer = bufnr,
+      row = 2, -- d3 line (0-based, so line 3)
+      start_col = 12,
+      end_col = 15,
+      hl_group = "TidalSoundActive", 
+      duration = 2000 -- 2 seconds
+    })
+    print("Test animation event queued - should highlight 'kick' for 2 seconds")
+  end, {desc = "Test animation system directly"})
 end
 
 return M
