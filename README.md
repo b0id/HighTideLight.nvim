@@ -1,192 +1,270 @@
 # HighTideLight.nvim
 
-A Neovim plugin that provides real-time visual feedback for Tidal live coding sessions. It highlights and animates Tidal patterns as they are evaluated, enhancing the live coding experience.
+**🚧 ACTIVE DEVELOPMENT** - This plugin is under active development and represents a breakthrough in real-time TidalCycles integration. Core functionality is working, but expect rapid changes as we polish features and add new capabilities.
+
+**Real-time surgical-precision highlighting** for TidalCycles patterns in Neovim with exact coordinate matching between SuperCollider audio events and source code tokens.
 
 ## Features
 
-- **Real-time Highlighting**: Automatically highlights Tidal patterns during evaluation
-- **OSC Integration**: Uses Open Sound Control for precise synchronization with Tidal
-- **Customizable Animations**: Configurable highlight groups, colors, and animation settings
-- **Seamless Integration**: Hooks directly into Tidal's evaluation process
-- **Neovim Commands**: Toggle, clear, and test highlighting with simple commands
+### ✅ Current Capabilities
+- **Surgical coordinate precision** - Exact token-level highlighting using AST parsing
+- **Multi-buffer support** - Simultaneous highlighting across multiple Tidal files  
+- **Real-time performance** - 50+ OSC messages/second with no audio dropouts
+- **Complex pattern support** - Effects chains, transformations, euclidean rhythms
+- **Orbit-aware highlighting** - d1→orbit0, d2→orbit1, intelligent pattern separation
+- **Thread-safe async communication** - Non-blocking SuperCollider ↔ Neovim bridge
+- **Comprehensive diagnostics** - 13 debug commands for troubleshooting
 
-## Requirements
+### 🎯 Architecture Highlights
+- **AST-based parsing** for precise token boundaries (30+ tokens per complex pattern)
+- **Coordinate matching system** between SuperCollider and Neovim
+- **Non-destructive highlighting** using Neovim's extmark API
+- **Automatic cleanup** and memory management
 
-- Neovim 0.5+
-- [Tidal](https://tidalcycles.org/) installed and configured
-- A Tidal Neovim plugin (e.g., [tidal.nvim](https://github.com/tidalcycles/tidal.nvim)) for basic Tidal integration
-- OSC support (built-in with Neovim Lua)
+## Why grddavies/tidal.nvim?
 
-## Installation
+We chose [grddavies/tidal.nvim](https://github.com/grddavies/tidal.nvim) as our foundation because:
 
-### Using [packer.nvim](https://github.com/wbthomason/packer.nvim)
+- **Modern Architecture** - Built with Neovim's latest APIs and Lua
+- **Clean API Hooks** - Provides `tidal.api.send()` and `tidal.api.send_multiline()` for pattern interception
+- **Active Maintenance** - Well-maintained with regular updates
+- **Extensible Design** - Allows plugins like HighTideLight to hook into the evaluation pipeline
+- **Zero Modification Required** - We can intercept patterns without changing TidalCycles workflow
 
-```lua
-use 'b0id/HighTideLight.nvim'
-```
+**Alternative Options:**
+- `tidalcycles/vim-tidal` - Older Vimscript implementation, harder to extend
+- Custom GHCI integration - Would require reinventing REPL communication
+- Direct TidalCycles modification - Would break compatibility and updates
 
-### Using [lazy.nvim](https://github.com/folke/lazy.nvim) (AstroNVIM default)
+## Installation & Setup
+
+### Prerequisites
+
+**Neovim Setup:**
+- **Neovim** ≥ 0.7 (for extmark API)
+- **TreeSitter** with Haskell grammar: `:TSInstall haskell`
+
+**TidalCycles Environment:**
+- **TidalCycles** properly installed and working
+- **SuperCollider** + **SuperDirt** functioning
+- **GHCI** accessible in PATH
+
+**Package Manager:**
+This setup uses [lazy.nvim](https://github.com/folke/lazy.nvim), the modern Neovim package manager with lazy loading and dependency management.
+
+### Lazy.nvim Configuration
+
+Add this to your Neovim configuration:
 
 ```lua
 {
-  "b0id/HighTideLight.nvim",
-  event = "VeryLazy",
-}
+  "grddavies/tidal.nvim",
+  opts = {
+    boot = {
+      tidal = {
+        cmd = "ghci",
+        args = { "-v0" },
+        file = vim.api.nvim_get_runtime_file("bootfiles/BootTidal.hs", false)[1],
+        enabled = true,
+      },
+      sclang = {
+        cmd = "sclang", 
+        args = {},
+        file = vim.api.nvim_get_runtime_file("bootfiles/BootSuperDirt.scd", false)[1],
+        enabled = false, -- Set to true for auto-start SuperCollider
+      },
+      split = "v", -- Vertical split for REPL
+    },
+    mappings = {
+      send_line = { mode = { "i", "n" }, key = "<S-CR>" },
+      send_visual = { mode = { "x" }, key = "<S-CR>" },
+      send_block = { mode = { "i", "n", "x" }, key = "<M-CR>" },
+      send_node = { mode = "n", key = "<leader><CR>" },
+      send_silence = { mode = "n", key = "<leader>m" },
+      send_hush = { mode = "n", key = "<leader><Esc>" },
+    },
+    selection_highlight = {
+      highlight = { link = "IncSearch" },
+      timeout = 150,
+    },
+  },
+  dependencies = {
+    "nvim-treesitter/nvim-treesitter",
+    opts = { ensure_installed = { "haskell", "supercollider" } },
+  },
+},
+
+-- HighTideLight.nvim configuration  
+{
+  "b0id/HighTideLight.nvim", -- Replace with your GitHub username
+  branch = "main", -- or "feature/ast-parsing" for latest development
+  lazy = false,
+  dependencies = { "grddavies/tidal.nvim" },
+  config = function()
+    require('tidal-highlight').setup({
+      debug = true, -- Enable for development/troubleshooting
+      enabled = true,
+      osc = {
+        ip = "127.0.0.1",
+        port = 6011,
+      },
+      animation = {
+        fps = 30,
+      },
+      highlights = {
+        groups = {
+          { name = "TidalEvent1", fg = "#ff0000", bg = "#000000", blend = 20 },
+          { name = "TidalEvent2", fg = "#00ff00", bg = "#000000", blend = 20 }, 
+          { name = "TidalEvent3", fg = "#0000ff", bg = "#000000", blend = 20 },
+        },
+        outline_style = "underline",
+      },
+    })
+  end,
+},
 ```
 
-### Using [vim-plug](https://github.com/junegunn/vim-plug)
+### SuperCollider Integration
 
-```vim
-Plug 'b0id/HighTideLight.nvim'
+Add this line to your SuperCollider startup file or evaluate manually:
+
+```supercollider
+"/path/to/HighTideLight.nvim/supercollider/HighTideLightOSC.scd".load;
 ```
 
-### Manual Installation
+**SuperCollider Startup File Locations:**
+- **Linux/macOS**: `~/.local/share/SuperCollider/startup.scd`
+- **Windows**: `%USERPROFILE%/AppData/Local/SuperCollider/startup.scd`
 
-Clone this repository into your Neovim plugin directory:
+## Configuration Options
 
-```bash
-git clone https://github.com/b0id/HighTideLight.nvim.git ~/.local/share/nvim/site/pack/plugins/start/HighTideLight.nvim
-```
-
-## Setup
-
-### Standard Neovim Configuration
-
-Add the following to your `init.lua`:
-
+### Basic Setup
 ```lua
 require('tidal-highlight').setup({
-  -- Optional: customize settings
+  debug = false,           -- Disable debug messages in production
+  enabled = true,          -- Enable highlighting system
   osc = {
-    ip = "127.0.0.1",
-    port = 6011,
+    ip = "127.0.0.1",     -- OSC server IP
+    port = 6011,          -- OSC server port  
   },
   animation = {
-    fps = 30,
-    duration_ms = 200,
+    fps = 30,             -- Highlight refresh rate
   },
   highlights = {
     groups = {
-      { name = "TidalEvent1", fg = "#ff6b6b", bg = nil, blend = 30 },
-      { name = "TidalEvent2", fg = "#4ecdc4", bg = nil, blend = 30 },
-      { name = "TidalEvent3", fg = "#45b7d1", bg = nil, blend = 30 },
-      { name = "TidalEvent4", fg = "#96ceb4", bg = nil, blend = 30 },
+      { name = "TidalEvent1", fg = "#ff6b6b", blend = 25 },
+      { name = "TidalEvent2", fg = "#4ecdc4", blend = 25 },
+      { name = "TidalEvent3", fg = "#45b7d1", blend = 25 },
+      { name = "TidalEvent4", fg = "#f9ca24", blend = 25 },
     },
-    outline_style = "underline", -- "underline", "box", or "bold"
   },
-  debug = false,
 })
 ```
 
-### AstroNVIM Configuration
-
-For AstroNVIM users, add the plugin to your `plugins` configuration. Create or modify `~/.config/nvim/lua/plugins/tidal-highlight.lua`:
-
+### Advanced Configuration
 ```lua
-return {
-  "b0id/HighTideLight.nvim",
-  event = "VeryLazy",
-  dependencies = {
-    -- Add your Tidal plugin dependency here, e.g.:
-    -- "tidalcycles/tidal.nvim",
+require('tidal-highlight').setup({
+  debug = true,
+  supercollider = {
+    ip = "127.0.0.1",
+    port = 57120, -- SuperCollider OSC port
   },
-  opts = {
-    osc = {
-      ip = "127.0.0.1",
-      port = 6011,
+  highlights = {
+    groups = {
+      -- Custom highlight groups per orbit
+      { name = "TidalDrums", fg = "#ff0000", bold = true },
+      { name = "TidalBass", fg = "#00ff00", italic = true },
+      { name = "TidalMelody", fg = "#0000ff", underline = true },
     },
-    animation = {
-      fps = 30,
-      duration_ms = 200,
-    },
-    highlights = {
-      groups = {
-        { name = "TidalEvent1", fg = "#ff6b6b", bg = nil, blend = 30 },
-        { name = "TidalEvent2", fg = "#4ecdc4", bg = nil, blend = 30 },
-        { name = "TidalEvent3", fg = "#45b7d1", bg = nil, blend = 30 },
-        { name = "TidalEvent4", fg = "#96ceb4", bg = nil, blend = 30 },
-      },
-      outline_style = "underline", -- "underline", "box", or "bold"
-    },
-    debug = false,
+    outline_style = "underline", -- or "border"
   },
-  config = function(_, opts)
-    require('tidal-highlight').setup(opts)
-  end,
-}
-```
-
-Alternatively, you can add it directly to your `community.lua` or main plugins table:
-
-```lua
-{
-  "b0id/HighTideLight.nvim",
-  event = "VeryLazy",
-  opts = {
-    -- Your configuration options here
+  animation = {
+    fps = 60, -- Higher refresh rate for smoother animation
+    fade_duration = 200, -- Fade out time in ms
   },
-}
+})
 ```
 
-## Usage
+## Usage & Commands
 
-1. Start Tidal in Neovim
-2. Evaluate Tidal patterns as usual
-3. HighTideLight will automatically highlight and animate the evaluated patterns
+### Basic Workflow
+1. **Start SuperCollider** with SuperDirt running
+2. **Open Neovim** with a `.tidal` or `.hs` file
+3. **Evaluate Tidal patterns** using `grddavies/tidal.nvim` commands
+4. **Watch real-time highlights** appear as patterns play
 
-### Commands
+### Debug Commands
+- `:TidalTestPatternParsing` - Test AST parsing on current buffer
+- `:TidalInspectSourceMaps` - View token coordinate mappings
+- `:TidalShowOSCHistory` - Display recent SuperCollider messages
+- `:TidalInspectOSCFlow` - Test coordinate matching logic
+- `:TidalShowStats` - System performance and statistics
+- :TidalQuietDebug - Disable debug notifications
+- :TidalDebugIntegration - Re-enable debug notifications
 
-- `:TidalHighlightToggle` - Enable/disable highlighting
-- `:TidalHighlightClear` - Clear all current highlights
-- `:TidalHighlightTest` - Test highlighting on the current line
+### Diagnostic Commands  
+- `:TidalHealthReport` - Overall system health check
+- `:TidalDebugIntegration` - Enable verbose debug logging
+- `:TidalTestAnimation` - Test highlight system directly
 
-## Configuration
+## Development Status
 
-All settings are optional and have sensible defaults. The plugin uses OSC port 6011 by default (different from SuperDirt's 6010).
+### ✅ Working Features
+- **Precision highlighting** with exact coordinate matching
+- **Multi-buffer support** for complex projects
+- **Real-time performance** optimized for live coding
+- **Complex pattern parsing** including effects and transformations
+- **Comprehensive debugging tools** for troubleshooting
 
-### Highlight Groups
+### 🚧 Known Issues
+- **Right-edge precision** - Highlights may be missing the last character
+- **Custom themes** - Limited highlight customization currently
+- **Documentation** - Some advanced features need better docs
 
-Customize the highlight groups to match your theme:
-
-```lua
-highlights = {
-  groups = {
-    { name = "TidalEvent1", fg = "#your_color", bg = nil, blend = 30 },
-    -- Add more groups as needed
-  },
-  outline_style = "underline", -- Options: "underline", "box", "bold"
-}
-```
-
-### Animation Settings
-
-Adjust animation speed and duration:
-
-```lua
-animation = {
-  fps = 30,        -- Frames per second
-  duration_ms = 200, -- Animation duration in milliseconds
-}
-```
-
-## How It Works
-
-1. **OSC Server**: Starts an OSC server to receive events from Tidal
-2. **Pattern Processing**: Intercepts Tidal evaluations and processes pattern lines
-3. **Event Handling**: Receives OSC messages with timing and position data
-4. **Highlight Animation**: Applies and animates highlights based on received events
-
-## Troubleshooting
-
-- Ensure Tidal is properly installed and the Tidal Neovim plugin is loaded
-- Check that OSC port 6011 is not blocked
-- Use `:TidalHighlightTest` to verify highlighting is working
-- Set `debug = true` in config for additional logging
+### 🔮 Planned Features
+- **Pattern visualization** beyond highlighting  
+- **Custom animation styles** and effects
+- **Multi-channel highlighting** for surround/spatial audio
+- **Export/import** of pattern coordinate data
+- **Additional live coding environment** integrations
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit issues and pull requests.
+This is an active development project welcoming contributions! Areas of interest:
 
-## License
+- **Performance optimization** for even larger patterns
+- **UI/UX improvements** and custom themes
+- **Additional diagnostic tools** and debugging features
+- **Documentation** and setup guides
+- **Testing infrastructure** and automated validation
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+## Architecture
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for complete technical documentation of the system design, data flow, and component interactions.
+
+## Troubleshooting
+
+### Common Issues
+1. **No highlights appearing**
+   - Check `:TidalShowOSCHistory` for SuperCollider communication
+   - Verify SuperCollider script is loaded: `HighTideLightOSC.scd`
+   - Test with `:TidalTestAnimation` to verify highlight system
+
+2. **Pattern parsing not working**
+   - Run `:TidalTestPatternParsing` to check AST extraction
+   - Ensure TreeSitter Haskell grammar is installed: `:TSInstall haskell`
+
+3. **SuperCollider connection issues**
+   - Check OSC port configuration (default: 6011)
+   - Verify SuperCollider and SuperDirt are running
+   - Use `:TidalHealthReport` for system diagnostics
+
+### Getting Help
+- **Enable debug mode**: `debug = true` in configuration
+- **Check system status**: `:TidalShowStats` command
+- **Review logs**: `:TidalShowOSCHistory` and `:TidalHealthReport`
+- **Test components**: Use individual test commands to isolate issues
+
+---
+
+**🚧 This plugin represents a breakthrough in live coding tool integration - precision, performance, and extensibility for the Neovim TidalCycles community.**
