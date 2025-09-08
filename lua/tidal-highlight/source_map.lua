@@ -34,7 +34,7 @@ function M.generate(bufnr, range)
           },
           ["end"] = {
             line = literal.range.start.line,
-            col = literal.range.start.col + 1 + token.relative_range["end"],
+            col = literal.range.start.col + 1 + token.relative_range["end"] + 1,
           },
         }
 
