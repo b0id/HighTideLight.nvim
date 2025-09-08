@@ -1,6 +1,6 @@
 # HighTideLight.nvim
 
-**🚧 ACTIVE DEVELOPMENT** - This plugin is under active development and represents a breakthrough in real-time TidalCycles integration. Core functionality is working, but expect rapid changes as we polish features and add new capabilities.
+**🚧 ACTIVE DEVELOPMENT** - This plugin is under active development and represents a breakthrough in real-time TidalCycles integration. Core functionality is working, but expect rapid changes as we polish features and add new capabilities.  (There are tons of edge case bugs that are being worked out)
 
 **Real-time surgical-precision highlighting** for TidalCycles patterns in Neovim with exact coordinate matching between SuperCollider audio events and source code tokens.
 
