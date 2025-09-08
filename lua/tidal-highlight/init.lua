@@ -21,7 +21,7 @@ M.pattern_store = M.pattern_store or {}
 local function wrap_tidal_api()
   local ok, tidal = pcall(require, 'tidal')
   if not ok or not tidal.api then
-    if config.current.debug then
+    if vim.g.tidal_highlight_debug then
       vim.notify("HighTideLight: tidal.nvim API not found, falling back to compat layer", vim.log.levels.WARN)
     end
     return wrap_tidal_send_fallback()
@@ -42,7 +42,7 @@ local function wrap_tidal_api()
     end
     return orig_send_multiline(lines)
   end
-  if config.current.debug then
+  if vim.g.tidal_highlight_debug then
     vim.notify("HighTideLight: Hooked tidal.nvim API (send + send_multiline)", vim.log.levels.INFO)
   end
   return true
@@ -60,7 +60,7 @@ function M.ingest_tidal_text(text)
   for line in (text .. "\n"):gmatch("(.-)\n") do table.insert(lines, line) end
   local pattern_info = M.find_pattern_header(lines)
   if not pattern_info then
-    if config.current.debug then vim.notify("[HighTideLight] SKIP: no dN/p N header found", vim.log.levels.DEBUG) end
+    if vim.g.tidal_highlight_debug then vim.notify("[HighTideLight] SKIP: no dN/p N header found", vim.log.levels.DEBUG) end
     return
   end
 
@@ -88,7 +88,7 @@ function M.ingest_tidal_text(text)
   -- ===========================================
 
   if #markers == 0 then
-    if config.current.debug then vim.notify("[HighTideLight] AST Parser found no sound markers.", vim.log.levels.INFO) end
+    if vim.g.tidal_highlight_debug then vim.notify("[HighTideLight] AST Parser found no sound markers.", vim.log.levels.INFO) end
     return
   end
 
@@ -105,7 +105,7 @@ function M.ingest_tidal_text(text)
       osc.send("/tidal/sound_position", { orbit, marker.word, marker.start_col, marker.end_col }, config.current.supercollider.ip, config.current.supercollider.port)
     end
   end
-  if config.current.debug then
+  if vim.g.tidal_highlight_debug then
     vim.notify(string.format("[HighTideLight] AST-PARSED: Stored pattern: orbit=%d sounds=%d", orbit, #markers), vim.log.levels.INFO)
   end
 end
@@ -133,7 +133,7 @@ local function handle_osc_highlight(args, address)
   table.insert(M.osc_history, {address = address, args = args, timestamp = vim.loop.now()})
   if #M.osc_history > 50 then table.remove(M.osc_history, 1) end -- Keep last 50
   
-  if config.current.debug then vim.notify(string.format("[HighTideLight] OSC %s: %s", address, vim.inspect(args)), vim.log.levels.DEBUG, { timeout = 2000 }) end
+  if vim.g.tidal_highlight_debug then vim.notify(string.format("[HighTideLight] OSC %s: %s", address, vim.inspect(args)), vim.log.levels.DEBUG, { timeout = 2000 }) end
   
   if #args == 6 then
     -- SuperCollider sends: [orbit, delta, cycle, colStart, eventId, colEnd]
@@ -170,7 +170,7 @@ local function handle_osc_highlight(args, address)
                 duration = duration 
               }
               
-              if config.current.debug then
+              if vim.g.tidal_highlight_debug then
                 vim.notify(string.format("[HighTideLight] QUEUEING EVENT: buf=%d row=%d cols=%d-%d dur=%dms", 
                   bufnr, event_data.row, col_start, col_end, duration), vim.log.levels.INFO)
               end
@@ -178,7 +178,7 @@ local function handle_osc_highlight(args, address)
               animation.queue_event(event_data)
               found_token = true
               
-              if config.current.debug then
+              if vim.g.tidal_highlight_debug then
                 vim.notify(string.format("[HighTideLight] PRECISION HIT! orbit=%d sound='%s' cols=%d-%d", 
                   orbit, token_info.value, col_start, col_end), vim.log.levels.INFO)
               end
@@ -192,7 +192,7 @@ local function handle_osc_highlight(args, address)
     end
     
     if not found_token then
-      if config.current.debug then 
+      if vim.g.tidal_highlight_debug then 
         vim.notify(string.format("[HighTideLight] No token found at orbit=%d cols=%d-%d", orbit, col_start, col_end), vim.log.levels.WARN, { timeout = 2000 }) 
       end
     end
@@ -201,7 +201,7 @@ local function handle_osc_highlight(args, address)
   elseif #args == 4 then
     -- Your original 4-arg logic...
   else
-    if config.current.debug then vim.notify("[HighTideLight] Invalid OSC args count: " .. #args, vim.log.levels.WARN, { timeout = 2000 }) end
+    if vim.g.tidal_highlight_debug then vim.notify("[HighTideLight] Invalid OSC args count: " .. #args, vim.log.levels.WARN, { timeout = 2000 }) end
   end
 end
 
@@ -212,6 +212,11 @@ function M.setup(opts)
   local cfg = config.setup(opts)
   if not cfg.enabled then return end
   M.enabled = true
+  
+  -- Initialize debug mode (default off unless specified in config)
+  if vim.g.tidal_highlight_debug == nil then
+    vim.g.tidal_highlight_debug = cfg.debug or false
+  end
   osc.start(cfg)
   
   -- Set up the new integrated highlighting system
@@ -449,6 +454,11 @@ function M.setup(opts)
     vim.g.tidal_highlight_debug = false
     vim.notify("HighTideLight: Debug mode disabled", vim.log.levels.INFO)
   end, {desc = "Disable debug mode"})
+  
+  vim.api.nvim_create_user_command('TidalDebugStatus', function()
+    local status = vim.g.tidal_highlight_debug and "ENABLED" or "DISABLED"
+    vim.notify("HighTideLight: Debug mode is " .. status, vim.log.levels.INFO)
+  end, {desc = "Show current debug mode status"})
   
   -- NEW: Data inspection commands for debugging
   vim.api.nvim_create_user_command('TidalInspectSourceMaps', function()
